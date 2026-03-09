@@ -1,0 +1,6 @@
+github.com/tomas-mraz/vulkan v0.0.0-20260309110136-723eafb7e79f h1:TWcjuwD4xVSagIpn4FU5bDIU79qomBa1PPLeNS1VSmI=
+github.com/tomas-mraz/vulkan v0.0.0-20260309110136-723eafb7e79f/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
+github.com/xlab/linmath v0.0.0-20220922225318-40b6290c3b40 h1:FmU7+0eD5GaZzxlbNxVMiC7th7/7qHtskrkWt0ltFkU=
+github.com/xlab/linmath v0.0.0-20220922225318-40b6290c3b40/go.mod h1:W1rLjlRa7JX2fcoZ4tb3ZkxuwI6pEX/JkDLPxe1/R1g=
+github.com/xlab/tablewriter v0.0.0-20160610135559-80b567a11ad5 h1:gmD7q6cCJfBbcuobWQe/KzLsd9Cd3amS1Mq5f3uU1qo=
+github.com/xlab/tablewriter v0.0.0-20160610135559-80b567a11ad5/go.mod h1:fVwOndYN3s5IaGlMucfgxwMhqwcaJtlGejBU6zX6Yxw=
