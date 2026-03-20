@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	_ "embed"
-	"fmt"
 	"image"
 	"image/draw"
 	"image/png"
@@ -110,15 +109,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Texture
-	texImage, texMem, texView, texSampler, err := createTexture(device.Device, device.GpuDevice)
+	// Texture via framework
+	img, err := png.Decode(bytes.NewReader(gopherPng))
 	if err != nil {
 		log.Fatal(err)
 	}
+	rgba := image.NewRGBA(img.Bounds())
+	draw.Draw(rgba, rgba.Bounds(), img, image.Point{}, draw.Src)
 
-	// Transition texture from PREINITIALIZED to SHADER_READ_ONLY_OPTIMAL
-	transitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(), texImage,
-		vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
+	texture, err := asch.NewTexture(device.Device, device.GpuDevice,
+		uint32(rgba.Bounds().Dx()), uint32(rgba.Bounds().Dy()), rgba.Pix)
+	if err != nil {
+		log.Fatal(err)
+	}
+	asch.TransitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(),
+		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
 	// Uniform buffers (one per swapchain image)
 	uniformBuffers, uniformMemories, err := createUniformBuffers(device.Device, device.GpuDevice, swapchainLen)
@@ -127,7 +132,7 @@ func main() {
 	}
 
 	// Descriptor set layout + pool + sets
-	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, uniformBuffers, texView, texSampler)
+	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, uniformBuffers, texture.GetView(), texture.GetSampler())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -187,10 +192,7 @@ func main() {
 		vk.FreeMemory(device.Device, uniformMemories[i], nil)
 		vk.DestroyBuffer(device.Device, uniformBuffers[i], nil)
 	}
-	vk.DestroySampler(device.Device, texSampler, nil)
-	vk.DestroyImageView(device.Device, texView, nil)
-	vk.FreeMemory(device.Device, texMem, nil)
-	vk.DestroyImage(device.Device, texImage, nil)
+	texture.Destroy()
 	vk.FreeCommandBuffers(device.Device, renderer.GetCmdPool(), swapchainLen, renderer.GetCmdBuffers())
 	vk.DestroyCommandPool(device.Device, renderer.GetCmdPool(), nil)
 	vk.DestroyRenderPass(device.Device, renderer.RenderPass, nil)
@@ -204,68 +206,6 @@ func main() {
 	vk.DestroyInstance(device.Instance, nil)
 }
 
-
-func createTexture(dev vk.Device, gpu vk.PhysicalDevice) (vk.Image, vk.DeviceMemory, vk.ImageView, vk.Sampler, error) {
-	img, err := png.Decode(bytes.NewReader(gopherPng))
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("decode png: %w", err)
-	}
-	rgba := image.NewRGBA(img.Bounds())
-	draw.Draw(rgba, rgba.Bounds(), img, image.Point{}, draw.Src)
-	w, h := uint32(rgba.Bounds().Dx()), uint32(rgba.Bounds().Dy())
-
-	var texImage vk.Image
-	if err := vk.Error(vk.CreateImage(dev, &vk.ImageCreateInfo{
-		SType: vk.StructureTypeImageCreateInfo, ImageType: vk.ImageType2d, Format: vk.FormatR8g8b8a8Unorm,
-		Extent: vk.Extent3D{Width: w, Height: h, Depth: 1}, MipLevels: 1, ArrayLayers: 1,
-		Samples: vk.SampleCount1Bit, Tiling: vk.ImageTilingLinear, Usage: vk.ImageUsageFlags(vk.ImageUsageSampledBit),
-		InitialLayout: vk.ImageLayoutPreinitialized,
-	}, nil, &texImage)); err != nil {
-		return texImage, nil, nil, nil, err
-	}
-
-	var memReq vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(dev, texImage, &memReq)
-	memReq.Deref()
-
-	memIdx, _ := vk.FindMemoryTypeIndex(gpu, memReq.MemoryTypeBits, vk.MemoryPropertyHostVisibleBit|vk.MemoryPropertyHostCoherentBit)
-	var texMem vk.DeviceMemory
-	if err := vk.Error(vk.AllocateMemory(dev, &vk.MemoryAllocateInfo{
-		SType: vk.StructureTypeMemoryAllocateInfo, AllocationSize: memReq.Size, MemoryTypeIndex: memIdx,
-	}, nil, &texMem)); err != nil {
-		return texImage, texMem, nil, nil, err
-	}
-	vk.BindImageMemory(dev, texImage, texMem, 0)
-
-	// Upload pixel data
-	var pData unsafe.Pointer
-	vk.MapMemory(dev, texMem, 0, vk.DeviceSize(len(rgba.Pix)), 0, &pData)
-	vk.Memcopy(pData, rgba.Pix)
-	vk.UnmapMemory(dev, texMem)
-
-	// Sampler
-	var sampler vk.Sampler
-	if err := vk.Error(vk.CreateSampler(dev, &vk.SamplerCreateInfo{
-		SType: vk.StructureTypeSamplerCreateInfo, MagFilter: vk.FilterNearest, MinFilter: vk.FilterNearest,
-		MipmapMode: vk.SamplerMipmapModeNearest,
-		AddressModeU: vk.SamplerAddressModeClampToEdge, AddressModeV: vk.SamplerAddressModeClampToEdge, AddressModeW: vk.SamplerAddressModeClampToEdge,
-		MaxAnisotropy: 1, CompareOp: vk.CompareOpNever, BorderColor: vk.BorderColorFloatOpaqueWhite,
-	}, nil, &sampler)); err != nil {
-		return texImage, texMem, nil, sampler, err
-	}
-
-	// Image view
-	var texView vk.ImageView
-	if err := vk.Error(vk.CreateImageView(dev, &vk.ImageViewCreateInfo{
-		SType: vk.StructureTypeImageViewCreateInfo, Image: texImage, ViewType: vk.ImageViewType2d, Format: vk.FormatR8g8b8a8Unorm,
-		Components: vk.ComponentMapping{R: vk.ComponentSwizzleR, G: vk.ComponentSwizzleG, B: vk.ComponentSwizzleB, A: vk.ComponentSwizzleA},
-		SubresourceRange: vk.ImageSubresourceRange{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1},
-	}, nil, &texView)); err != nil {
-		return texImage, texMem, texView, sampler, err
-	}
-
-	return texImage, texMem, texView, sampler, nil
-}
 
 func createUniformBuffers(dev vk.Device, gpu vk.PhysicalDevice, count uint32) ([]vk.Buffer, []vk.DeviceMemory, error) {
 	buffers := make([]vk.Buffer, count)
@@ -487,45 +427,6 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	return ret == vk.Success || ret == vk.Suboptimal
 }
 
-func transitionImageLayout(dev vk.Device, queue vk.Queue, cmdPool vk.CommandPool, image vk.Image, oldLayout, newLayout vk.ImageLayout) {
-	cmds := make([]vk.CommandBuffer, 1)
-	vk.AllocateCommandBuffers(dev, &vk.CommandBufferAllocateInfo{
-		SType: vk.StructureTypeCommandBufferAllocateInfo, CommandPool: cmdPool,
-		Level: vk.CommandBufferLevelPrimary, CommandBufferCount: 1,
-	}, cmds)
-	cmd := cmds[0]
-
-	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{
-		SType: vk.StructureTypeCommandBufferBeginInfo,
-		Flags: vk.CommandBufferUsageFlags(vk.CommandBufferUsageOneTimeSubmitBit),
-	})
-
-	var srcAccess, dstAccess vk.AccessFlags
-	var srcStage, dstStage vk.PipelineStageFlags
-	switch {
-	case oldLayout == vk.ImageLayoutPreinitialized && newLayout == vk.ImageLayoutShaderReadOnlyOptimal:
-		srcAccess = vk.AccessFlags(vk.AccessHostWriteBit)
-		dstAccess = vk.AccessFlags(vk.AccessShaderReadBit)
-		srcStage = vk.PipelineStageFlags(vk.PipelineStageHostBit)
-		dstStage = vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit)
-	}
-
-	vk.CmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-		SType: vk.StructureTypeImageMemoryBarrier, SrcAccessMask: srcAccess, DstAccessMask: dstAccess,
-		OldLayout: oldLayout, NewLayout: newLayout, Image: image,
-		SubresourceRange: vk.ImageSubresourceRange{
-			AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1,
-		},
-	}})
-
-	vk.EndCommandBuffer(cmd)
-
-	vk.QueueSubmit(queue, 1, []vk.SubmitInfo{{
-		SType: vk.StructureTypeSubmitInfo, CommandBufferCount: 1, PCommandBuffers: []vk.CommandBuffer{cmd},
-	}}, vk.NullFence)
-	vk.QueueWaitIdle(queue)
-	vk.FreeCommandBuffers(dev, cmdPool, 1, []vk.CommandBuffer{cmd})
-}
 
 // Cube vertex data (36 vertices = 12 triangles = 6 faces)
 var gVertexBufferData = []float32{

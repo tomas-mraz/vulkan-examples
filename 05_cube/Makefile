@@ -11,7 +11,7 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 build: shaders ## Build the application
-	go build -tags $(TAGS) -o vulkancube .
+	go build -tags $(TAGS) -o 05_cube .
 
 run: shaders ## Build and run the application
 	go run -tags $(TAGS) .
@@ -25,4 +25,4 @@ install-tools: ## Install glslang-tools for shader compilation
 	sudo apt-get install -y glslang-tools
 
 clean: ## Remove binary and compiled shaders
-	rm -f vulkancube $(SHADER_DIR)/*.spv
+	rm -f 05_cube $(SHADER_DIR)/*.spv

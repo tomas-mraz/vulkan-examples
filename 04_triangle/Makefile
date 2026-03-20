@@ -11,7 +11,7 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 build: shaders ## Build the application
-	go build -tags $(TAGS) -o rotating-triangle .
+	go build -tags $(TAGS) -o 04_triangle .
 
 run: shaders ## Build and run the application
 	go run -tags $(TAGS) .
@@ -25,4 +25,4 @@ install-tools: ## Install glslang-tools for shader compilation
 	sudo apt-get install -y glslang-tools
 
 clean: ## Remove binary and compiled shaders
-	rm -f rotating-triangle $(SHADER_DIR)/*.spv
+	rm -f 04_triangle $(SHADER_DIR)/*.spv
