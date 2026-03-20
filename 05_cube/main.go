@@ -125,14 +125,14 @@ func main() {
 	asch.TransitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(),
 		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
-	// Uniform buffers (one per swapchain image)
-	uniformBuffers, uniformMemories, err := createUniformBuffers(device.Device, device.GpuDevice, swapchainLen)
+	// Uniform buffers (one per swapchain image) via framework
+	uniforms, err := asch.NewUniformBuffers(device.Device, device.GpuDevice, swapchainLen, uniformDataSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Descriptor set layout + pool + sets
-	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, uniformBuffers, texture.GetView(), texture.GetSampler())
+	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, uniforms.GetBuffers(), texture.GetView(), texture.GetSampler())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func main() {
 		if !drawCubeFrame(device.Device, device.Queue, swapchain, renderer,
 			fence, semaphore,
 			pipelineLayout, pipelineObj, descSets,
-			uniformBuffers, uniformMemories,
+			&uniforms,
 			&projMatrix, &viewMatrix, &modelMatrix) {
 			break
 		}
@@ -188,10 +188,7 @@ func main() {
 	vk.DestroyPipelineLayout(device.Device, pipelineLayout, nil)
 	vk.DestroyDescriptorPool(device.Device, descPool, nil)
 	vk.DestroyDescriptorSetLayout(device.Device, descLayout, nil)
-	for i := uint32(0); i < swapchainLen; i++ {
-		vk.FreeMemory(device.Device, uniformMemories[i], nil)
-		vk.DestroyBuffer(device.Device, uniformBuffers[i], nil)
-	}
+	uniforms.Destroy()
 	texture.Destroy()
 	vk.FreeCommandBuffers(device.Device, renderer.GetCmdPool(), swapchainLen, renderer.GetCmdBuffers())
 	vk.DestroyCommandPool(device.Device, renderer.GetCmdPool(), nil)
@@ -207,32 +204,6 @@ func main() {
 }
 
 
-func createUniformBuffers(dev vk.Device, gpu vk.PhysicalDevice, count uint32) ([]vk.Buffer, []vk.DeviceMemory, error) {
-	buffers := make([]vk.Buffer, count)
-	memories := make([]vk.DeviceMemory, count)
-
-	for i := uint32(0); i < count; i++ {
-		if err := vk.Error(vk.CreateBuffer(dev, &vk.BufferCreateInfo{
-			SType: vk.StructureTypeBufferCreateInfo, Size: vk.DeviceSize(uniformDataSize),
-			Usage: vk.BufferUsageFlags(vk.BufferUsageUniformBufferBit), SharingMode: vk.SharingModeExclusive,
-		}, nil, &buffers[i])); err != nil {
-			return buffers, memories, err
-		}
-
-		var memReq vk.MemoryRequirements
-		vk.GetBufferMemoryRequirements(dev, buffers[i], &memReq)
-		memReq.Deref()
-
-		memIdx, _ := vk.FindMemoryTypeIndex(gpu, memReq.MemoryTypeBits, vk.MemoryPropertyHostVisibleBit|vk.MemoryPropertyHostCoherentBit)
-		if err := vk.Error(vk.AllocateMemory(dev, &vk.MemoryAllocateInfo{
-			SType: vk.StructureTypeMemoryAllocateInfo, AllocationSize: memReq.Size, MemoryTypeIndex: memIdx,
-		}, nil, &memories[i])); err != nil {
-			return buffers, memories, err
-		}
-		vk.BindBufferMemory(dev, buffers[i], memories[i], 0)
-	}
-	return buffers, memories, nil
-}
 
 func createDescriptors(dev vk.Device, count uint32, uniformBuffers []vk.Buffer, texView vk.ImageView, sampler vk.Sampler) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet, error) {
 	var layout vk.DescriptorSetLayout
@@ -351,7 +322,7 @@ func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
 	return fence, sem, nil
 }
 
-func updateUniformBuffer(dev vk.Device, mem vk.DeviceMemory, proj, view, model *lin.Mat4x4) {
+func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj, view, model *lin.Mat4x4) {
 	var VP, MVP lin.Mat4x4
 	VP.Mult(proj, view)
 	MVP.Mult(&VP, model)
@@ -362,10 +333,7 @@ func updateUniformBuffer(dev vk.Device, mem vk.DeviceMemory, proj, view, model *
 		data.Attr[i] = [4]float32{gUVBufferData[i*2], gUVBufferData[i*2+1], 0, 0}
 	}
 
-	var pData unsafe.Pointer
-	vk.MapMemory(dev, mem, 0, vk.DeviceSize(uniformDataSize), 0, &pData)
-	vk.Memcopy(pData, data.Bytes())
-	vk.UnmapMemory(dev, mem)
+	uniforms.Update(index, data.Bytes())
 }
 
 func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
@@ -373,7 +341,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	fence vk.Fence, semaphore vk.Semaphore,
 	pipelineLayout vk.PipelineLayout, pipeline vk.Pipeline,
 	descSets []vk.DescriptorSet,
-	uniformBuffers []vk.Buffer, uniformMemories []vk.DeviceMemory,
+	uniforms *asch.VulkanUniformBuffers,
 	proj, view, model *lin.Mat4x4,
 ) bool {
 	var nextIdx uint32
@@ -383,7 +351,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	}
 
 	// Update uniform buffer for this frame
-	updateUniformBuffer(dev, uniformMemories[nextIdx], proj, view, model)
+	updateUniformBuffer(uniforms, nextIdx, proj, view, model)
 
 	cmd := r.GetCmdBuffers()[nextIdx]
 	vk.ResetCommandBuffer(cmd, 0)
