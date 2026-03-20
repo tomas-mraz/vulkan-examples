@@ -12,6 +12,7 @@ Examples of using [tomas-mraz/vulkan](https://github.com/tomas-mraz/vulkan) Go b
 | 04 | `04_triangle` | Rotating blue triangle (GLFW, push constants) |
 | 05 | `05_cube` | Textured rotating cube with gopher texture (GLFW, uniform buffer, depth buffer, descriptor sets) |
 | 06 | `06_model` | Rotating 3D teapot model from glTF file (GLFW, indexed drawing, depth buffer, directional light) |
+| 07 | `07_model_textured` | Rotating textured teacup from GLB file (GLFW, texture sampling, indexed drawing, depth buffer) |
 
 ## Requirements
 
@@ -34,3 +35,12 @@ To see available targets:
 ```bash
 make help
 ```
+
+# Assets and licences
+
+DiffuseTransmissionTeacup model using Diffuse Transmission extension.
+Credit:
+© 2023, Public domain. CC0 1.0 Universal
+- Polyhaven.com, and Eric Chadwick for Models and Textures
+
+
