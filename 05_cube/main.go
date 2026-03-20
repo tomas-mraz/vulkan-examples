@@ -90,26 +90,20 @@ func main() {
 
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
-	// Depth buffer
-	depthImage, depthMem, depthView, err := createDepthBuffer(device.Device, device.GpuDevice, windowWidth, windowHeight)
+	// Depth buffer via framework
+	depth, err := asch.NewDepthBuffer(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD16Unorm)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Render pass with color + depth
-	renderPass, err := createRenderPassWithDepth(device.Device, swapchain.DisplayFormat)
+	// Renderer with depth (render pass + command pool)
+	renderer, err := asch.NewRendererWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Framebuffers
-	if err := swapchain.CreateFramebuffers(renderPass, depthView); err != nil {
-		log.Fatal(err)
-	}
-
-	// Renderer (command pool + buffers)
-	renderer, err := asch.NewRenderer(device.Device, swapchain.DisplayFormat)
-	if err != nil {
+	if err := swapchain.CreateFramebuffers(renderer.RenderPass, depth.GetView()); err != nil {
 		log.Fatal(err)
 	}
 	if err := renderer.CreateCommandBuffers(swapchainLen); err != nil {
@@ -139,7 +133,7 @@ func main() {
 	}
 
 	// Pipeline
-	pipelineLayout, pipelineObj, pipelineCache, err := createCubePipeline(device.Device, renderPass, descLayout)
+	pipelineLayout, pipelineObj, pipelineCache, err := createCubePipeline(device.Device, renderer.RenderPass, descLayout)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -171,7 +165,7 @@ func main() {
 		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, lin.DegreesToRadians(elapsed))
 
 		if !drawCubeFrame(device.Device, device.Queue, swapchain, renderer,
-			renderPass, fence, semaphore,
+			fence, semaphore,
 			pipelineLayout, pipelineObj, descSets,
 			uniformBuffers, uniformMemories,
 			&projMatrix, &viewMatrix, &modelMatrix) {
@@ -199,11 +193,8 @@ func main() {
 	vk.DestroyImage(device.Device, texImage, nil)
 	vk.FreeCommandBuffers(device.Device, renderer.GetCmdPool(), swapchainLen, renderer.GetCmdBuffers())
 	vk.DestroyCommandPool(device.Device, renderer.GetCmdPool(), nil)
-	vk.DestroyRenderPass(device.Device, renderPass, nil)
-	vk.DestroyRenderPass(device.Device, renderer.RenderPass, nil) // unused render pass from NewRenderer
-	vk.DestroyImageView(device.Device, depthView, nil)
-	vk.FreeMemory(device.Device, depthMem, nil)
-	vk.DestroyImage(device.Device, depthImage, nil)
+	vk.DestroyRenderPass(device.Device, renderer.RenderPass, nil)
+	depth.Destroy()
 	swapchain.Destroy()
 	vk.DestroyDevice(device.Device, nil)
 	if device.GetDebugCallback() != vk.NullDebugReportCallback {
@@ -213,65 +204,6 @@ func main() {
 	vk.DestroyInstance(device.Instance, nil)
 }
 
-func createDepthBuffer(dev vk.Device, gpu vk.PhysicalDevice, w, h uint32) (vk.Image, vk.DeviceMemory, vk.ImageView, error) {
-	depthFormat := vk.FormatD16Unorm
-
-	var img vk.Image
-	if err := vk.Error(vk.CreateImage(dev, &vk.ImageCreateInfo{
-		SType:     vk.StructureTypeImageCreateInfo,
-		ImageType: vk.ImageType2d,
-		Format:    depthFormat,
-		Extent:    vk.Extent3D{Width: w, Height: h, Depth: 1},
-		MipLevels: 1, ArrayLayers: 1,
-		Samples: vk.SampleCount1Bit,
-		Tiling:  vk.ImageTilingOptimal,
-		Usage:   vk.ImageUsageFlags(vk.ImageUsageDepthStencilAttachmentBit),
-	}, nil, &img)); err != nil {
-		return img, nil, nil, err
-	}
-
-	var memReq vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(dev, img, &memReq)
-	memReq.Deref()
-
-	memIdx, _ := vk.FindMemoryTypeIndex(gpu, memReq.MemoryTypeBits, vk.MemoryPropertyDeviceLocalBit)
-	var mem vk.DeviceMemory
-	if err := vk.Error(vk.AllocateMemory(dev, &vk.MemoryAllocateInfo{
-		SType: vk.StructureTypeMemoryAllocateInfo, AllocationSize: memReq.Size, MemoryTypeIndex: memIdx,
-	}, nil, &mem)); err != nil {
-		return img, mem, nil, err
-	}
-	vk.BindImageMemory(dev, img, mem, 0)
-
-	var view vk.ImageView
-	if err := vk.Error(vk.CreateImageView(dev, &vk.ImageViewCreateInfo{
-		SType: vk.StructureTypeImageViewCreateInfo, Image: img, ViewType: vk.ImageViewType2d, Format: depthFormat,
-		SubresourceRange: vk.ImageSubresourceRange{AspectMask: vk.ImageAspectFlags(vk.ImageAspectDepthBit), LevelCount: 1, LayerCount: 1},
-	}, nil, &view)); err != nil {
-		return img, mem, view, err
-	}
-	return img, mem, view, nil
-}
-
-func createRenderPassWithDepth(dev vk.Device, colorFormat vk.Format) (vk.RenderPass, error) {
-	var rp vk.RenderPass
-	err := vk.Error(vk.CreateRenderPass(dev, &vk.RenderPassCreateInfo{
-		SType:           vk.StructureTypeRenderPassCreateInfo,
-		AttachmentCount: 2,
-		PAttachments: []vk.AttachmentDescription{
-			{Format: colorFormat, Samples: vk.SampleCount1Bit, LoadOp: vk.AttachmentLoadOpClear, StoreOp: vk.AttachmentStoreOpStore, StencilLoadOp: vk.AttachmentLoadOpDontCare, StencilStoreOp: vk.AttachmentStoreOpDontCare, InitialLayout: vk.ImageLayoutUndefined, FinalLayout: vk.ImageLayoutPresentSrc},
-			{Format: vk.FormatD16Unorm, Samples: vk.SampleCount1Bit, LoadOp: vk.AttachmentLoadOpClear, StoreOp: vk.AttachmentStoreOpDontCare, StencilLoadOp: vk.AttachmentLoadOpDontCare, StencilStoreOp: vk.AttachmentStoreOpDontCare, InitialLayout: vk.ImageLayoutUndefined, FinalLayout: vk.ImageLayoutDepthStencilAttachmentOptimal},
-		},
-		SubpassCount: 1,
-		PSubpasses: []vk.SubpassDescription{{
-			PipelineBindPoint:    vk.PipelineBindPointGraphics,
-			ColorAttachmentCount: 1,
-			PColorAttachments:    []vk.AttachmentReference{{Attachment: 0, Layout: vk.ImageLayoutColorAttachmentOptimal}},
-			PDepthStencilAttachment: &vk.AttachmentReference{Attachment: 1, Layout: vk.ImageLayoutDepthStencilAttachmentOptimal},
-		}},
-	}, nil, &rp))
-	return rp, err
-}
 
 func createTexture(dev vk.Device, gpu vk.PhysicalDevice) (vk.Image, vk.DeviceMemory, vk.ImageView, vk.Sampler, error) {
 	img, err := png.Decode(bytes.NewReader(gopherPng))
@@ -497,7 +429,7 @@ func updateUniformBuffer(dev vk.Device, mem vk.DeviceMemory, proj, view, model *
 }
 
 func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	r asch.VulkanRenderInfo, renderPass vk.RenderPass,
+	r asch.VulkanRenderInfo,
 	fence vk.Fence, semaphore vk.Semaphore,
 	pipelineLayout vk.PipelineLayout, pipeline vk.Pipeline,
 	descSets []vk.DescriptorSet,
@@ -522,7 +454,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	clearValues[1].SetDepthStencil(1.0, 0)
 
 	vk.CmdBeginRenderPass(cmd, &vk.RenderPassBeginInfo{
-		SType: vk.StructureTypeRenderPassBeginInfo, RenderPass: renderPass, Framebuffer: s.Framebuffers[nextIdx],
+		SType: vk.StructureTypeRenderPassBeginInfo, RenderPass: r.RenderPass, Framebuffer: s.Framebuffers[nextIdx],
 		RenderArea:      vk.Rect2D{Extent: s.DisplaySize},
 		ClearValueCount: 2, PClearValues: clearValues,
 	}, vk.SubpassContentsInline)
