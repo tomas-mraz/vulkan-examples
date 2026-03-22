@@ -1,4 +1,6 @@
 github.com/tomas-mraz/vulkan v0.0.0-20260322212130-88ac43a9bd7e h1:Hq4219aajqY1iomzt4g0w8IS7UG3149zPxvz0ujgqvM=
 github.com/tomas-mraz/vulkan v0.0.0-20260322212130-88ac43a9bd7e/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
+github.com/tomas-mraz/vulkan v0.0.0-20260323092157-15e9ae077464/go.mod h1:/ZMss5vYfgdj0cgekmlIc4Nn/pL74lJYAMWrn/k0in4=
+github.com/tomas-mraz/vulkan-ash v0.0.0-20260323073340-31ed5e3662d8/go.mod h1:AsMtx9L8GjX5K8i3/HNIaJoecF+ZRC7ViphbrFMmyJ8=
 github.com/xlab/tablewriter v0.0.0-20160610135559-80b567a11ad5 h1:gmD7q6cCJfBbcuobWQe/KzLsd9Cd3amS1Mq5f3uU1qo=
 github.com/xlab/tablewriter v0.0.0-20160610135559-80b567a11ad5/go.mod h1:fVwOndYN3s5IaGlMucfgxwMhqwcaJtlGejBU6zX6Yxw=

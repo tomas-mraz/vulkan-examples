@@ -1,6 +1,7 @@
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20250301202403-da16c1255728 h1:RkGhqHxEVAvPM0/R+8g7XRwQnHatO0KAuVcwHo8q9W8=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20250301202403-da16c1255728/go.mod h1:SyRD8YfuKk+ZXlDqYiqe1qMSqjNgtHzBTG810KUagMc=
-github.com/tomas-mraz/vulkan v0.0.0-20260309110136-723eafb7e79f h1:TWcjuwD4xVSagIpn4FU5bDIU79qomBa1PPLeNS1VSmI=
-github.com/tomas-mraz/vulkan v0.0.0-20260309110136-723eafb7e79f/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
-github.com/xlab/linmath v0.0.0-20220922225318-40b6290c3b40 h1:FmU7+0eD5GaZzxlbNxVMiC7th7/7qHtskrkWt0ltFkU=
-github.com/xlab/linmath v0.0.0-20220922225318-40b6290c3b40/go.mod h1:W1rLjlRa7JX2fcoZ4tb3ZkxuwI6pEX/JkDLPxe1/R1g=
+github.com/tomas-mraz/vulkan v0.0.0-20260322212130-88ac43a9bd7e h1:Hq4219aajqY1iomzt4g0w8IS7UG3149zPxvz0ujgqvM=
+github.com/tomas-mraz/vulkan v0.0.0-20260322212130-88ac43a9bd7e/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
+github.com/tomas-mraz/vulkan v0.0.0-20260323092157-15e9ae077464 h1:24Uj6oiW8piYKm4OLId5TsZH7jN6fDf+M0oerYGzVz8=
+github.com/tomas-mraz/vulkan v0.0.0-20260323092157-15e9ae077464/go.mod h1:/ZMss5vYfgdj0cgekmlIc4Nn/pL74lJYAMWrn/k0in4=
+github.com/tomas-mraz/vulkan-ash v0.0.0-20260323073340-31ed5e3662d8/go.mod h1:AsMtx9L8GjX5K8i3/HNIaJoecF+ZRC7ViphbrFMmyJ8=
