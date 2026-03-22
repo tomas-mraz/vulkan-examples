@@ -161,6 +161,7 @@ func printInfo(device asch.Vulkan, gpuDevices []vk.PhysicalDevice, loaderVersion
 		table.AddSeparator()
 	}
 
+	table.AddSeparator()
 	table.AddRow("INSTANCE EXTENSIONS", "")
 	for i, name := range getInstanceExtensions() {
 		table.AddRow(i+1, name)
