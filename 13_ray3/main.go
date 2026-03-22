@@ -21,7 +21,6 @@ import (
 	"github.com/qmuntal/gltf/modeler"
 	vk "github.com/tomas-mraz/vulkan"
 	asch "github.com/tomas-mraz/vulkan-ash"
-	lin "github.com/xlab/linmath"
 )
 
 //go:embed shaders/raygen.rgen.spv
@@ -48,8 +47,8 @@ const (
 var frameCounter uint32
 
 type uniformData struct {
-	ViewInverse lin.Mat4x4
-	ProjInverse lin.Mat4x4
+	ViewInverse asch.Mat4x4
+	ProjInverse asch.Mat4x4
 	Frame       uint32
 	Pad         [3]uint32
 	LightPos    [4]float32
@@ -249,8 +248,8 @@ func main() {
 	}
 
 	// Match Sascha Willems raytracinggltf camera setup.
-	var projMatrix, viewMatrix lin.Mat4x4
-	setPerspectiveZO(&projMatrix, lin.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
+	var projMatrix, viewMatrix asch.Mat4x4
+	setPerspectiveZO(&projMatrix, asch.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
 	viewMatrix.Translate(0.0, -0.1, -1.0)
 
 	log.Println("Ray tracing initialized, starting render loop")
@@ -473,21 +472,21 @@ func gltfNodeTransform(node *gltf.Node) [16]float32 {
 	rotation := node.RotationOrDefault()
 	scale := node.ScaleOrDefault()
 
-	var t lin.Mat4x4
+	var t asch.Mat4x4
 	t.Translate(float32(translation[0]), float32(translation[1]), float32(translation[2]))
 
-	var r lin.Mat4x4
-	r.FromQuat(&lin.Quat{
+	var r asch.Mat4x4
+	r.FromQuat(&asch.Quat{
 		float32(rotation[0]),
 		float32(rotation[1]),
 		float32(rotation[2]),
 		float32(rotation[3]),
 	})
 
-	var rs lin.Mat4x4
+	var rs asch.Mat4x4
 	rs.ScaleAniso(&r, float32(scale[0]), float32(scale[1]), float32(scale[2]))
 
-	var trs lin.Mat4x4
+	var trs asch.Mat4x4
 	trs.Mult(&t, &rs)
 	return mat4ToArray(&trs)
 }
@@ -522,7 +521,7 @@ func gltfMatrixToArray(m [16]float64) [16]float32 {
 	return out
 }
 
-func mat4ToArray(m *lin.Mat4x4) [16]float32 {
+func mat4ToArray(m *asch.Mat4x4) [16]float32 {
 	var out [16]float32
 	for col := 0; col < 4; col++ {
 		for row := 0; row < 4; row++ {
@@ -532,7 +531,7 @@ func mat4ToArray(m *lin.Mat4x4) [16]float32 {
 	return out
 }
 
-func setPerspectiveZO(m *lin.Mat4x4, yFov, aspect, near, far float32) {
+func setPerspectiveZO(m *asch.Mat4x4, yFov, aspect, near, far float32) {
 	f := float32(1.0 / math.Tan(float64(yFov)/2.0))
 
 	m[0][0] = f / aspect
@@ -1217,7 +1216,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	descSets []vk.DescriptorSet, uniforms *asch.VulkanUniformBuffers,
 	storageImage vk.Image,
 	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
-	proj, view *lin.Mat4x4, lightPos [4]float32,
+	proj, view *asch.Mat4x4, lightPos [4]float32,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
