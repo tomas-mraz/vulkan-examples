@@ -3,14 +3,12 @@ package main
 import (
 	_ "embed"
 	"log"
-	"math"
 	"runtime"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 	vk "github.com/tomas-mraz/vulkan"
 	asch "github.com/tomas-mraz/vulkan-ash"
-	lin "github.com/xlab/linmath"
 )
 
 //go:embed shaders/raygen.rgen.spv
@@ -29,8 +27,8 @@ const (
 )
 
 type uniformData struct {
-	ViewInverse lin.Mat4x4
-	ProjInverse lin.Mat4x4
+	ViewInverse asch.Mat4x4
+	ProjInverse asch.Mat4x4
 }
 
 const uniformSize = int(unsafe.Sizeof(uniformData{}))
@@ -190,9 +188,9 @@ func main() {
 	}
 
 	// Camera matrices
-	var projMatrix, viewMatrix lin.Mat4x4
-	projMatrix.Perspective(lin.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
-	viewMatrix.LookAt(&lin.Vec3{0, 0, -2.5}, &lin.Vec3{0, 0, 0}, &lin.Vec3{0, 1, 0})
+	var projMatrix, viewMatrix asch.Mat4x4
+	projMatrix.Perspective(asch.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
+	viewMatrix.LookAt(&asch.Vec3{0, 0, -2.5}, &asch.Vec3{0, 0, 0}, &asch.Vec3{0, 1, 0})
 	projMatrix[1][1] *= -1
 
 	log.Println("Ray tracing initialized, starting render loop")
@@ -725,41 +723,6 @@ func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
 	return fence, sem, nil
 }
 
-// Simple 4x4 matrix inverse using cofactor expansion
-func invertMatrix(m *lin.Mat4x4) lin.Mat4x4 {
-	var inv lin.Mat4x4
-	s := [6]float32{
-		m[0][0]*m[1][1] - m[1][0]*m[0][1], m[0][0]*m[1][2] - m[1][0]*m[0][2], m[0][0]*m[1][3] - m[1][0]*m[0][3],
-		m[0][1]*m[1][2] - m[1][1]*m[0][2], m[0][1]*m[1][3] - m[1][1]*m[0][3], m[0][2]*m[1][3] - m[1][2]*m[0][3],
-	}
-	c := [6]float32{
-		m[2][0]*m[3][1] - m[3][0]*m[2][1], m[2][0]*m[3][2] - m[3][0]*m[2][2], m[2][0]*m[3][3] - m[3][0]*m[2][3],
-		m[2][1]*m[3][2] - m[3][1]*m[2][2], m[2][1]*m[3][3] - m[3][1]*m[2][3], m[2][2]*m[3][3] - m[3][2]*m[2][3],
-	}
-	det := s[0]*c[5] - s[1]*c[4] + s[2]*c[3] + s[3]*c[2] - s[4]*c[1] + s[5]*c[0]
-	if math.Abs(float64(det)) < 1e-10 {
-		inv.Identity()
-		return inv
-	}
-	d := 1.0 / det
-	inv[0][0] = (m[1][1]*c[5] - m[1][2]*c[4] + m[1][3]*c[3]) * d
-	inv[0][1] = (-m[0][1]*c[5] + m[0][2]*c[4] - m[0][3]*c[3]) * d
-	inv[0][2] = (m[3][1]*s[5] - m[3][2]*s[4] + m[3][3]*s[3]) * d
-	inv[0][3] = (-m[2][1]*s[5] + m[2][2]*s[4] - m[2][3]*s[3]) * d
-	inv[1][0] = (-m[1][0]*c[5] + m[1][2]*c[2] - m[1][3]*c[1]) * d
-	inv[1][1] = (m[0][0]*c[5] - m[0][2]*c[2] + m[0][3]*c[1]) * d
-	inv[1][2] = (-m[3][0]*s[5] + m[3][2]*s[2] - m[3][3]*s[1]) * d
-	inv[1][3] = (m[2][0]*s[5] - m[2][2]*s[2] + m[2][3]*s[1]) * d
-	inv[2][0] = (m[1][0]*c[4] - m[1][1]*c[2] + m[1][3]*c[0]) * d
-	inv[2][1] = (-m[0][0]*c[4] + m[0][1]*c[2] - m[0][3]*c[0]) * d
-	inv[2][2] = (m[3][0]*s[4] - m[3][1]*s[2] + m[3][3]*s[0]) * d
-	inv[2][3] = (-m[2][0]*s[4] + m[2][1]*s[2] - m[2][3]*s[0]) * d
-	inv[3][0] = (-m[1][0]*c[3] + m[1][1]*c[1] - m[1][2]*c[0]) * d
-	inv[3][1] = (m[0][0]*c[3] - m[0][1]*c[1] + m[0][2]*c[0]) * d
-	inv[3][2] = (-m[3][0]*s[3] + m[3][1]*s[1] - m[3][2]*s[0]) * d
-	inv[3][3] = (m[2][0]*s[3] - m[2][1]*s[1] + m[2][2]*s[0]) * d
-	return inv
-}
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
 	fence vk.Fence, semaphore vk.Semaphore,
@@ -767,7 +730,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	descSets []vk.DescriptorSet, uniforms *asch.VulkanUniformBuffers,
 	storageImage vk.Image,
 	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
-	proj, view *lin.Mat4x4,
+	proj, view *asch.Mat4x4,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
@@ -776,8 +739,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	}
 
 	// Update uniform buffer with inverse matrices
-	projInv := invertMatrix(proj)
-	viewInv := invertMatrix(view)
+	projInv := asch.InvertMatrix(proj)
+	viewInv := asch.InvertMatrix(view)
 	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv}
 	uniforms.Update(nextIdx, ubo.Bytes())
 
