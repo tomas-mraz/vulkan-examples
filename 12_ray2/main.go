@@ -11,9 +11,9 @@ import (
 	"log"
 	"math"
 	"os"
-	"time"
 	"path/filepath"
 	"runtime"
+	"time"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -21,7 +21,6 @@ import (
 	"github.com/qmuntal/gltf/modeler"
 	vk "github.com/tomas-mraz/vulkan"
 	asch "github.com/tomas-mraz/vulkan-ash"
-	lin "github.com/xlab/linmath"
 )
 
 //go:embed shaders/raygen.rgen.spv
@@ -48,8 +47,8 @@ const (
 var frameCounter uint32
 
 type uniformData struct {
-	ViewInverse lin.Mat4x4
-	ProjInverse lin.Mat4x4
+	ViewInverse asch.Mat4x4
+	ProjInverse asch.Mat4x4
 	Frame       uint32
 }
 
@@ -244,8 +243,8 @@ func main() {
 	}
 
 	// Match Sascha Willems raytracinggltf camera setup.
-	var projMatrix, viewMatrix lin.Mat4x4
-	setPerspectiveZO(&projMatrix, lin.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
+	var projMatrix, viewMatrix asch.Mat4x4
+	setPerspectiveZO(&projMatrix, asch.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
 	viewMatrix.Translate(0.0, -0.1, -1.0)
 
 	log.Println("Ray tracing initialized, starting render loop")
@@ -256,8 +255,8 @@ func main() {
 
 		// Rotate the view around Y axis (like 06_model)
 		elapsed := float32(time.Since(startTime).Seconds()) * 45.0
-		var rotatedView lin.Mat4x4
-		rotatedView.Rotate(&viewMatrix, 0.0, 1.0, 0.0, lin.DegreesToRadians(elapsed))
+		var rotatedView asch.Mat4x4
+		rotatedView.Rotate(&viewMatrix, 0.0, 1.0, 0.0, asch.DegreesToRadians(elapsed))
 		frameCounter = 0 // reset accumulation — camera changed
 
 		if !drawFrame(dev, queue, swapchain, cmdBuffers, fence, semaphore,
@@ -459,21 +458,21 @@ func gltfNodeTransform(node *gltf.Node) [16]float32 {
 	rotation := node.RotationOrDefault()
 	scale := node.ScaleOrDefault()
 
-	var t lin.Mat4x4
+	var t asch.Mat4x4
 	t.Translate(float32(translation[0]), float32(translation[1]), float32(translation[2]))
 
-	var r lin.Mat4x4
-	r.FromQuat(&lin.Quat{
+	var r asch.Mat4x4
+	r.FromQuat(&asch.Quat{
 		float32(rotation[0]),
 		float32(rotation[1]),
 		float32(rotation[2]),
 		float32(rotation[3]),
 	})
 
-	var rs lin.Mat4x4
+	var rs asch.Mat4x4
 	rs.ScaleAniso(&r, float32(scale[0]), float32(scale[1]), float32(scale[2]))
 
-	var trs lin.Mat4x4
+	var trs asch.Mat4x4
 	trs.Mult(&t, &rs)
 	return mat4ToArray(&trs)
 }
@@ -494,7 +493,7 @@ func gltfMatrixToArray(m [16]float64) [16]float32 {
 	return out
 }
 
-func mat4ToArray(m *lin.Mat4x4) [16]float32 {
+func mat4ToArray(m *asch.Mat4x4) [16]float32 {
 	var out [16]float32
 	for col := 0; col < 4; col++ {
 		for row := 0; row < 4; row++ {
@@ -504,7 +503,7 @@ func mat4ToArray(m *lin.Mat4x4) [16]float32 {
 	return out
 }
 
-func setPerspectiveZO(m *lin.Mat4x4, yFov, aspect, near, far float32) {
+func setPerspectiveZO(m *asch.Mat4x4, yFov, aspect, near, far float32) {
 	f := float32(1.0 / math.Tan(float64(yFov)/2.0))
 
 	m[0][0] = f / aspect
@@ -1298,41 +1297,6 @@ func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
 	return fence, sem, nil
 }
 
-// Simple 4x4 matrix inverse using cofactor expansion
-func invertMatrix(m *lin.Mat4x4) lin.Mat4x4 {
-	var inv lin.Mat4x4
-	s := [6]float32{
-		m[0][0]*m[1][1] - m[1][0]*m[0][1], m[0][0]*m[1][2] - m[1][0]*m[0][2], m[0][0]*m[1][3] - m[1][0]*m[0][3],
-		m[0][1]*m[1][2] - m[1][1]*m[0][2], m[0][1]*m[1][3] - m[1][1]*m[0][3], m[0][2]*m[1][3] - m[1][2]*m[0][3],
-	}
-	c := [6]float32{
-		m[2][0]*m[3][1] - m[3][0]*m[2][1], m[2][0]*m[3][2] - m[3][0]*m[2][2], m[2][0]*m[3][3] - m[3][0]*m[2][3],
-		m[2][1]*m[3][2] - m[3][1]*m[2][2], m[2][1]*m[3][3] - m[3][1]*m[2][3], m[2][2]*m[3][3] - m[3][2]*m[2][3],
-	}
-	det := s[0]*c[5] - s[1]*c[4] + s[2]*c[3] + s[3]*c[2] - s[4]*c[1] + s[5]*c[0]
-	if math.Abs(float64(det)) < 1e-10 {
-		inv.Identity()
-		return inv
-	}
-	d := 1.0 / det
-	inv[0][0] = (m[1][1]*c[5] - m[1][2]*c[4] + m[1][3]*c[3]) * d
-	inv[0][1] = (-m[0][1]*c[5] + m[0][2]*c[4] - m[0][3]*c[3]) * d
-	inv[0][2] = (m[3][1]*s[5] - m[3][2]*s[4] + m[3][3]*s[3]) * d
-	inv[0][3] = (-m[2][1]*s[5] + m[2][2]*s[4] - m[2][3]*s[3]) * d
-	inv[1][0] = (-m[1][0]*c[5] + m[1][2]*c[2] - m[1][3]*c[1]) * d
-	inv[1][1] = (m[0][0]*c[5] - m[0][2]*c[2] + m[0][3]*c[1]) * d
-	inv[1][2] = (-m[3][0]*s[5] + m[3][2]*s[2] - m[3][3]*s[1]) * d
-	inv[1][3] = (m[2][0]*s[5] - m[2][2]*s[2] + m[2][3]*s[1]) * d
-	inv[2][0] = (m[1][0]*c[4] - m[1][1]*c[2] + m[1][3]*c[0]) * d
-	inv[2][1] = (-m[0][0]*c[4] + m[0][1]*c[2] - m[0][3]*c[0]) * d
-	inv[2][2] = (m[3][0]*s[4] - m[3][1]*s[2] + m[3][3]*s[0]) * d
-	inv[2][3] = (-m[2][0]*s[4] + m[2][1]*s[2] - m[2][3]*s[0]) * d
-	inv[3][0] = (-m[1][0]*c[3] + m[1][1]*c[1] - m[1][2]*c[0]) * d
-	inv[3][1] = (m[0][0]*c[3] - m[0][1]*c[1] + m[0][2]*c[0]) * d
-	inv[3][2] = (-m[3][0]*s[3] + m[3][1]*s[1] - m[3][2]*s[0]) * d
-	inv[3][3] = (m[2][0]*s[3] - m[2][1]*s[1] + m[2][2]*s[0]) * d
-	return inv
-}
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
 	fence vk.Fence, semaphore vk.Semaphore,
@@ -1340,7 +1304,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	descSets []vk.DescriptorSet, uniforms *asch.VulkanUniformBuffers,
 	storageImage vk.Image,
 	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
-	proj, view *lin.Mat4x4,
+	proj, view *asch.Mat4x4,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
@@ -1349,8 +1313,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	}
 
 	// Update uniform buffer with inverse matrices
-	projInv := invertMatrix(proj)
-	viewInv := invertMatrix(view)
+	projInv := asch.InvertMatrix(proj)
+	viewInv := asch.InvertMatrix(view)
 	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv, Frame: frameCounter}
 	uniforms.Update(nextIdx, ubo.Bytes())
 	frameCounter++
