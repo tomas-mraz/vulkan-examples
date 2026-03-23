@@ -4,4 +4,8 @@ github.com/tomas-mraz/vulkan v0.0.0-20260322212130-88ac43a9bd7e h1:Hq4219aajqY1i
 github.com/tomas-mraz/vulkan v0.0.0-20260322212130-88ac43a9bd7e/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
 github.com/tomas-mraz/vulkan v0.0.0-20260323092157-15e9ae077464 h1:24Uj6oiW8piYKm4OLId5TsZH7jN6fDf+M0oerYGzVz8=
 github.com/tomas-mraz/vulkan v0.0.0-20260323092157-15e9ae077464/go.mod h1:/ZMss5vYfgdj0cgekmlIc4Nn/pL74lJYAMWrn/k0in4=
+github.com/tomas-mraz/vulkan v0.0.0-20260323112817-4f29e510696c h1:NR9rifAgbzWXG8OJWoLfI1fT2uudtvslBwrjc+havbU=
+github.com/tomas-mraz/vulkan v0.0.0-20260323112817-4f29e510696c/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
 github.com/tomas-mraz/vulkan-ash v0.0.0-20260323073340-31ed5e3662d8/go.mod h1:AsMtx9L8GjX5K8i3/HNIaJoecF+ZRC7ViphbrFMmyJ8=
+github.com/tomas-mraz/vulkan-ash v0.0.0-20260323122016-b1e454795046 h1:gaYDtiAuBWLRVoCJNh4s7LllbsBuOiFMIjoSjZTmax0=
+github.com/tomas-mraz/vulkan-ash v0.0.0-20260323122016-b1e454795046/go.mod h1:3XYuxmJrcjhY250WAHxwXpnE8o5zHduRByo8oJy4LaY=

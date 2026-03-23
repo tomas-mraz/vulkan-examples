@@ -179,7 +179,7 @@ func main() {
 		for i := 0; i < triCount; i++ {
 			delay := float64(i) * phaseDuration
 			t := elapsed - delay
-			if !checkStarted[i] && t >= 0.5 {
+			if !checkStarted[i] && t >= 0 {
 				checkStarted[i] = true
 				phase := i + 1
 				go func() {
@@ -193,9 +193,9 @@ func main() {
 			select {
 			case r := <-resultCh:
 				checkDone[r.idx] = true
-				// Set spin duration to elapsed spin time — triangle finishes spinning now
+				// Set spin duration to elapsed spin time (0 if still in ramp-up)
 				delay := float64(r.idx) * phaseDuration
-				spinT := elapsed - delay - 0.5
+				spinT := elapsed - delay - rampUpDur
 				if spinT < 0 {
 					spinT = 0
 				}
@@ -334,7 +334,7 @@ func runCheck(phase int, gpu vk.PhysicalDevice, rtExtensions []string) bool {
 		return true
 	case 2:
 		log.Println("check2: pass")
-		time.Sleep(1400 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		return true
 	case 3:
 		log.Println("check3: pass")
