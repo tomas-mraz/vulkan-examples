@@ -33,6 +33,8 @@ type uniformData struct {
 	Frame       uint32
 	Pad         [3]uint32
 	LightPos    [4]float32
+	Brightness  float32
+	Pad2        [3]float32
 }
 
 const rtUniformSize = int(unsafe.Sizeof(uniformData{}))
@@ -244,11 +246,19 @@ func runRayTracingScene(window *glfw.Window) {
 	log.Println("Ray tracing initialized, starting render loop")
 	startTime := time.Now()
 
+	const fadeInDur = 0.5
 	for !window.ShouldClose() {
 		glfw.PollEvents()
 
+		// Fade in brightness
+		elapsedSec := time.Since(startTime).Seconds()
+		brightness := float32(1.0)
+		if elapsedSec < fadeInDur {
+			brightness = float32(elapsedSec / fadeInDur)
+		}
+
 		// Red light orbiting above the model
-		elapsed := float32(time.Since(startTime).Seconds())
+		elapsed := float32(elapsedSec)
 		lightAngle := elapsed * 0.672 // radians per second
 		lightRadius := float32(1.0)
 		lightX := lightRadius * float32(math.Cos(float64(lightAngle)))
@@ -259,7 +269,7 @@ func runRayTracingScene(window *glfw.Window) {
 		if !rtDrawFrame(dev, queue, swapchain, cmdBuffers, fence, semaphore,
 			pipeline, pipelineLayout, descSets, &uniforms,
 			storageImg.GetImage(), &raygenSBT, &missSBT, &hitSBT,
-			&projMatrix, &viewMatrix, lightPos) {
+			&projMatrix, &viewMatrix, lightPos, brightness) {
 			break
 		}
 	}
@@ -1205,7 +1215,7 @@ func rtDrawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdB
 	descSets []vk.DescriptorSet, uniforms *asch.VulkanUniformBuffers,
 	storageImage vk.Image,
 	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
-	proj, view *asch.Mat4x4, lightPos [4]float32,
+	proj, view *asch.Mat4x4, lightPos [4]float32, brightness float32,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
@@ -1216,7 +1226,7 @@ func rtDrawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdB
 	// Update uniform buffer with inverse matrices
 	projInv := asch.InvertMatrix(proj)
 	viewInv := asch.InvertMatrix(view)
-	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv, Frame: rtFrameCounter, LightPos: lightPos}
+	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv, Frame: rtFrameCounter, LightPos: lightPos, Brightness: brightness}
 	uniforms.Update(nextIdx, ubo.Bytes())
 	rtFrameCounter++
 

@@ -10,6 +10,7 @@ layout (push_constant) uniform PushConstants {
     float colorR;
     float colorG;
     float colorB;
+    float brightness;
 } pc;
 
 void main() {

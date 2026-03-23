@@ -24,13 +24,14 @@ const (
 
 // pushData matches the push constant layout in both shaders.
 type pushData struct {
-	OffsetX float32
-	OffsetY float32
-	Angle   float32
-	Aspect  float32
-	ColorR  float32
-	ColorG  float32
-	ColorB  float32
+	OffsetX    float32
+	OffsetY    float32
+	Angle      float32
+	Aspect     float32
+	ColorR     float32
+	ColorG     float32
+	ColorB     float32
+	Brightness float32
 }
 
 const pushSize = uint32(unsafe.Sizeof(pushData{}))
@@ -240,15 +241,41 @@ func main() {
 			}
 		}
 
-		if !drawFrame(device.Device, device.Queue, swapchain, renderer, buffer, fence, semaphore, gfx, offsets, states) {
+		if !drawFrame(device.Device, device.Queue, swapchain, renderer, buffer, fence, semaphore, gfx, offsets, states, 1.0) {
 			break
 		}
 
-		// Check if all triangles finished and RT is available → transition
+		// Check if all triangles finished → fade out and transition
 		if allTrianglesDone(elapsed, params[:], triStart[:]) {
-			log.Println("All tests passed — switching to ray tracing scene")
-			time.Sleep(500 * time.Millisecond) // brief pause to show final state
 			break
+		}
+	}
+
+	// Fade out (0.5s)
+	if !params[triCount-1].fails && !window.ShouldClose() {
+		log.Println("All tests passed — fading out")
+		fadeStart := time.Now()
+		const fadeDur = 0.5
+		for !window.ShouldClose() {
+			glfw.PollEvents()
+			ft := time.Since(fadeStart).Seconds()
+			if ft >= fadeDur {
+				// Draw final black frame
+				drawFrame(device.Device, device.Queue, swapchain, renderer, buffer, fence, semaphore, gfx, offsets, [triCount]triState{}, 0.0)
+				break
+			}
+			brightness := float32(1.0 - ft/fadeDur)
+			// Recompute states at frozen time
+			elapsed := time.Since(wallStart).Seconds()
+			var states [triCount]triState
+			for i := 0; i < triCount; i++ {
+				if triStart[i] >= 0 {
+					states[i] = triCheck(triStart[i], elapsed, params[i].spinDur, params[i].fails, params[i].failAt)
+				}
+			}
+			if !drawFrame(device.Device, device.Queue, swapchain, renderer, buffer, fence, semaphore, gfx, offsets, states, brightness) {
+				break
+			}
 		}
 	}
 
@@ -414,6 +441,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.VulkanGfxPipelineInfo,
 	offsets [triCount]vec2, states [triCount]triState,
+	brightness float32,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
@@ -425,7 +453,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	vk.ResetCommandBuffer(cmd, 0)
 	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{SType: vk.StructureTypeCommandBufferBeginInfo})
 
-	clearValues := []vk.ClearValue{vk.NewClearValue([]float32{0.1, 0.1, 0.1, 1})}
+	bg := float32(0.1) * brightness
+	clearValues := []vk.ClearValue{vk.NewClearValue([]float32{bg, bg, bg, 1})}
 	vk.CmdBeginRenderPass(cmd, &vk.RenderPassBeginInfo{
 		SType:           vk.StructureTypeRenderPassBeginInfo,
 		RenderPass:      r.RenderPass,
@@ -447,7 +476,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 			Aspect:  float32(windowHeight) / float32(windowWidth),
 			ColorR:  states[i].r,
 			ColorG:  states[i].g,
-			ColorB:  states[i].b,
+			ColorB:     states[i].b,
+			Brightness: brightness,
 		}
 		vk.CmdPushConstants(cmd, gfx.GetLayout(), stageFlags, 0, pushSize, unsafe.Pointer(&pd))
 		vk.CmdDraw(cmd, 3, 1, 0, 0)
