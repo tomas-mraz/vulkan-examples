@@ -11,9 +11,9 @@ import (
 	"log"
 	"math"
 	"os"
-	"time"
 	"path/filepath"
 	"runtime"
+	"time"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -181,6 +181,15 @@ func main() {
 	dev := device.Device
 	gpu := device.GpuDevice
 	queue := device.Queue
+
+	// Check Vulkan 1.2 and HW ray tracing support
+	requiredVersion := vk.MakeVersion(1, 2, 0)
+	if ok, ver := asch.CheckDeviceApiVersion(gpu, requiredVersion); !ok {
+		log.Fatalf("GPU supports Vulkan %s, but %s is required", vk.Version(ver), vk.Version(requiredVersion))
+	}
+	if ok, missing := asch.CheckDeviceExtensions(gpu, rtExtensions); !ok {
+		log.Fatalf("GPU does not support HW accelerated ray tracing, missing extensions: %v", missing)
+	}
 
 	// Query RT pipeline properties (use hardcoded defaults, standard on all GPUs)
 	const shaderGroupHandleSize = 32
