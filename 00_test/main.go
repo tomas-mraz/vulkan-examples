@@ -18,9 +18,8 @@ var fragShaderCode = mustReadFile("shaders/tri.frag.spv")
 const (
 	windowWidth   = 800
 	windowHeight  = 600
-	appName       = "7 Triangles Test"
-	triCount      = 7
-	phaseDuration = 4.0 // total seconds per triangle (yellow→spin→green)
+	appName  = "7 Triangles Test"
+	triCount = 7
 )
 
 // pushData matches the push constant layout in both shaders.
@@ -165,21 +164,41 @@ func main() {
 		pass bool
 	}
 	checkStarted := [triCount]bool{}
-	checkDone := [triCount]bool{}
 	resultCh := make(chan checkResult, triCount)
 
+	// Dynamic start times — each triangle starts when the previous finishes
+	var triStart [triCount]float64
+	triStart[0] = 0
+	for i := 1; i < triCount; i++ {
+		triStart[i] = -1 // not yet scheduled
+	}
+
 	log.Println("Starting render loop")
-	startTime := time.Now()
+	wallStart := time.Now()
 
 	for !window.ShouldClose() {
 		glfw.PollEvents()
-		elapsed := time.Since(startTime).Seconds()
+		elapsed := time.Since(wallStart).Seconds()
 
-		// Launch check goroutines when each triangle enters its spin phase
+		// Schedule next triangle when previous one finishes
+		for i := 1; i < triCount; i++ {
+			if triStart[i] >= 0 {
+				continue // already scheduled
+			}
+			prev := i - 1
+			prevDone := triStart[prev] + rampUpDur + params[prev].spinDur + rampDownDur
+			if elapsed >= prevDone {
+				triStart[i] = prevDone
+			}
+		}
+
+		// Launch check goroutines when each triangle starts its animation
 		for i := 0; i < triCount; i++ {
-			delay := float64(i) * phaseDuration
-			t := elapsed - delay
-			if !checkStarted[i] && t >= 0 {
+			if triStart[i] < 0 || checkStarted[i] {
+				continue
+			}
+			t := elapsed - triStart[i]
+			if t >= 0 {
 				checkStarted[i] = true
 				phase := i + 1
 				go func() {
@@ -192,10 +211,8 @@ func main() {
 		for {
 			select {
 			case r := <-resultCh:
-				checkDone[r.idx] = true
 				// Set spin duration to elapsed spin time (0 if still in ramp-up)
-				delay := float64(r.idx) * phaseDuration
-				spinT := elapsed - delay - rampUpDur
+				spinT := elapsed - triStart[r.idx] - rampUpDur
 				if spinT < 0 {
 					spinT = 0
 				}
@@ -213,11 +230,11 @@ func main() {
 		var states [triCount]triState
 		stopped := false
 		for i := 0; i < triCount; i++ {
-			if stopped {
+			if stopped || triStart[i] < 0 {
 				states[i] = triState{0, 0, 1, 0} // stays blue
 			} else {
-				states[i] = triCheck(i, elapsed, params[i].spinDur, params[i].fails, params[i].failAt)
-				if params[i].fails && triHasFailed(i, elapsed, params[i].spinDur, params[i].failAt) {
+				states[i] = triCheck(triStart[i], elapsed, params[i].spinDur, params[i].fails, params[i].failAt)
+				if params[i].fails && triHasFailed(triStart[i], elapsed, params[i].spinDur, params[i].failAt) {
 					stopped = true
 				}
 			}
@@ -228,7 +245,7 @@ func main() {
 		}
 
 		// Check if all triangles finished and RT is available → transition
-		if allTrianglesDone(elapsed, params[:]) {
+		if allTrianglesDone(elapsed, params[:], triStart[:]) {
 			log.Println("All tests passed — switching to ray tracing scene")
 			time.Sleep(500 * time.Millisecond) // brief pause to show final state
 			break
@@ -258,7 +275,7 @@ func main() {
 }
 
 // triCheck computes the state for triangle N given elapsed time and its parameters.
-// Each triangle starts its animation after N*phaseDuration seconds.
+// Each triangle starts when the previous one finishes.
 const (
 	maxSpeed    = 4.0 // rad/s at full spin
 	rampUpDur   = 0.5 // seconds for blue→yellow (speed 0→max)
@@ -277,9 +294,8 @@ func rampDownAngle(t float64) float32 {
 	return float32(maxSpeed * (t - t*t/(2*rampDownDur)))
 }
 
-func triCheck(n int, elapsed float64, spinDur float64, fails bool, failAt float64) triState {
-	delay := float64(n) * phaseDuration
-	t := elapsed - delay
+func triCheck(start float64, elapsed float64, spinDur float64, fails bool, failAt float64) triState {
+	t := elapsed - start
 	if t < 0 {
 		return triState{0, 0, 1, 0} // blue — not started
 	}
@@ -320,9 +336,8 @@ func triCheck(n int, elapsed float64, spinDur float64, fails bool, failAt float6
 }
 
 // triHasFailed returns true if triangle N has already failed at the given elapsed time.
-func triHasFailed(n int, elapsed float64, spinDur float64, failAt float64) bool {
-	delay := float64(n) * phaseDuration
-	t := elapsed - delay
+func triHasFailed(start float64, elapsed float64, spinDur float64, failAt float64) bool {
+	t := elapsed - start
 	return t >= rampUpDur+failAt
 }
 
@@ -377,13 +392,15 @@ type triParams struct {
 	failAt  float64
 }
 
-func allTrianglesDone(elapsed float64, params []triParams) bool {
+func allTrianglesDone(elapsed float64, params []triParams, triStart []float64) bool {
 	for i, p := range params {
 		if p.fails {
-			return false // a failed triangle means not all passed
+			return false
 		}
-		delay := float64(i) * phaseDuration
-		t := elapsed - delay
+		if triStart[i] < 0 {
+			return false
+		}
+		t := elapsed - triStart[i]
 		doneAt := rampUpDur + p.spinDur + rampDownDur
 		if t < doneAt {
 			return false
