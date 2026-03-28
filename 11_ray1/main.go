@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 	vk "github.com/tomas-mraz/vulkan"
-	asch "github.com/tomas-mraz/vulkan-ash"
+	ash "github.com/tomas-mraz/vulkan-ash"
 )
 
 //go:embed shaders/raygen.rgen.spv
@@ -27,8 +27,8 @@ const (
 )
 
 type uniformData struct {
-	ViewInverse asch.Mat4x4
-	ProjInverse asch.Mat4x4
+	ViewInverse ash.Mat4x4
+	ProjInverse ash.Mat4x4
 }
 
 const uniformSize = int(unsafe.Sizeof(uniformData{}))
@@ -61,18 +61,8 @@ func main() {
 	defer window.Destroy()
 
 	// Create device with ray tracing extensions
-	asch.SetDebug(false)
+	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
-
-	rtExtensions := []string{
-		"VK_KHR_acceleration_structure\x00",
-		"VK_KHR_ray_tracing_pipeline\x00",
-		"VK_KHR_buffer_device_address\x00",
-		"VK_KHR_deferred_host_operations\x00",
-		"VK_EXT_descriptor_indexing\x00",
-		"VK_KHR_spirv_1_4\x00",
-		"VK_KHR_shader_float_controls\x00",
-	}
 
 	// Enable required features via pNext chain
 	bufferDeviceAddressFeatures := vk.PhysicalDeviceBufferDeviceAddressFeatures{
@@ -90,14 +80,14 @@ func main() {
 		PNext:                 unsafe.Pointer(&rtPipelineFeatures),
 	}
 
-	device, err := asch.NewDeviceWithOptions(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
+	device, err := ash.NewDeviceWithOptions(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
 		surfPtr, err := window.CreateWindowSurface(instance, nil)
 		if err != nil {
 			return vk.NullSurface, err
 		}
 		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0, &asch.DeviceOptions{
-		DeviceExtensions: rtExtensions,
+	}, 0, &ash.DeviceOptions{
+		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&asFeatures),
 		ApiVersion:       vk.MakeVersion(1, 2, 0),
 	})
@@ -113,8 +103,8 @@ func main() {
 	const shaderGroupHandleAlignment = 32
 
 	// Create swapchain
-	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := asch.NewSwapchain(dev, gpu, device.Surface, windowSize)
+	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
+	swapchain, err := ash.NewSwapchain(dev, gpu, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -169,7 +159,7 @@ func main() {
 	storageImage, storageImageMem, storageImageView := createStorageImage(dev, gpu, queue, cmdPool, windowWidth, windowHeight, swapchain.DisplayFormat)
 
 	// --- Uniform buffers ---
-	uniforms, err := asch.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
+	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -188,9 +178,9 @@ func main() {
 	}
 
 	// Camera matrices
-	var projMatrix, viewMatrix asch.Mat4x4
-	projMatrix.Perspective(asch.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
-	viewMatrix.LookAt(&asch.Vec3{0, 0, -2.5}, &asch.Vec3{0, 0, 0}, &asch.Vec3{0, 1, 0})
+	var projMatrix, viewMatrix ash.Mat4x4
+	projMatrix.Perspective(ash.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
+	viewMatrix.LookAt(&ash.Vec3{0, 0, -2.5}, &ash.Vec3{0, 0, 0}, &ash.Vec3{0, 1, 0})
 	projMatrix[1][1] *= -1
 
 	log.Println("Ray tracing initialized, starting render loop")
@@ -591,7 +581,7 @@ func createStorageImage(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cm
 	return img, mem, view
 }
 
-func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, uniforms *asch.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
+func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
 	var layout vk.DescriptorSetLayout
 	vk.CreateDescriptorSetLayout(dev, &vk.DescriptorSetLayoutCreateInfo{
 		SType: vk.StructureTypeDescriptorSetLayoutCreateInfo, BindingCount: 3,
@@ -647,9 +637,9 @@ func createRTPipeline(dev vk.Device, descLayout vk.DescriptorSetLayout) (vk.Pipe
 		PSetLayouts: []vk.DescriptorSetLayout{descLayout},
 	}, nil, &pipelineLayout)
 
-	raygenModule, _ := asch.LoadShaderFromBytes(dev, raygenShaderCode)
-	missModule, _ := asch.LoadShaderFromBytes(dev, missShaderCode)
-	closestHitModule, _ := asch.LoadShaderFromBytes(dev, closestHitShaderCode)
+	raygenModule, _ := ash.LoadShaderFromBytes(dev, raygenShaderCode)
+	missModule, _ := ash.LoadShaderFromBytes(dev, missShaderCode)
+	closestHitModule, _ := ash.LoadShaderFromBytes(dev, closestHitShaderCode)
 
 	stages := []vk.PipelineShaderStageCreateInfo{
 		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageRaygenBit), Module: raygenModule, PName: []byte("main\x00")},
@@ -723,14 +713,13 @@ func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
 	return fence, sem, nil
 }
 
-
-func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
 	fence vk.Fence, semaphore vk.Semaphore,
 	pipeline vk.Pipeline, pipelineLayout vk.PipelineLayout,
-	descSets []vk.DescriptorSet, uniforms *asch.VulkanUniformBuffers,
+	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
 	storageImage vk.Image,
 	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
-	proj, view *asch.Mat4x4,
+	proj, view *ash.Mat4x4,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
@@ -739,8 +728,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	}
 
 	// Update uniform buffer with inverse matrices
-	projInv := asch.InvertMatrix(proj)
-	viewInv := asch.InvertMatrix(view)
+	projInv := ash.InvertMatrix(proj)
+	viewInv := ash.InvertMatrix(view)
 	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv}
 	uniforms.Update(nextIdx, ubo.Bytes())
 

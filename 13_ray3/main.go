@@ -20,7 +20,7 @@ import (
 	"github.com/qmuntal/gltf"
 	"github.com/qmuntal/gltf/modeler"
 	vk "github.com/tomas-mraz/vulkan"
-	asch "github.com/tomas-mraz/vulkan-ash"
+	ash "github.com/tomas-mraz/vulkan-ash"
 )
 
 //go:embed shaders/raygen.rgen.spv
@@ -47,8 +47,8 @@ const (
 var frameCounter uint32
 
 type uniformData struct {
-	ViewInverse asch.Mat4x4
-	ProjInverse asch.Mat4x4
+	ViewInverse ash.Mat4x4
+	ProjInverse ash.Mat4x4
 	Frame       uint32
 	Pad         [3]uint32
 	LightPos    [4]float32
@@ -122,7 +122,7 @@ func main() {
 	defer window.Destroy()
 
 	// Create device with ray tracing extensions
-	asch.SetDebug(false)
+	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 
 	rtExtensions := []string{
@@ -163,18 +163,22 @@ func main() {
 		ShaderStorageImageWriteWithoutFormat: vk.True,
 	}
 
-	device, err := asch.NewDeviceWithOptions(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
+	ooo := ash.DeviceOptions{
+		DeviceExtensions: ash.RaytracingExtensions(),
+		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
+		EnabledFeatures:  &enabledFeatures,
+		ApiVersion:       vk.MakeVersion(1, 2, 0),
+	}
+
+	fff := func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
 		surfPtr, err := window.CreateWindowSurface(instance, nil)
 		if err != nil {
 			return vk.NullSurface, err
 		}
 		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0, &asch.DeviceOptions{
-		DeviceExtensions: rtExtensions,
-		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
-		EnabledFeatures:  &enabledFeatures,
-		ApiVersion:       vk.MakeVersion(1, 2, 0),
-	})
+	}
+
+	device, err := ash.NewDeviceWithOptions(appName, extensions, fff, 0, &ooo)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -184,10 +188,10 @@ func main() {
 
 	// Check Vulkan 1.2 and HW ray tracing support
 	requiredVersion := vk.MakeVersion(1, 2, 0)
-	if ok, ver := asch.CheckDeviceApiVersion(gpu, requiredVersion); !ok {
+	if ok, ver := ash.CheckDeviceApiVersion(gpu, requiredVersion); !ok {
 		log.Fatalf("GPU supports Vulkan %s, but %s is required", vk.Version(ver), vk.Version(requiredVersion))
 	}
-	if ok, missing := asch.CheckDeviceExtensions(gpu, rtExtensions); !ok {
+	if ok, missing := ash.CheckDeviceExtensions(gpu, ash.RaytracingExtensions()); !ok {
 		log.Fatalf("GPU does not support HW accelerated ray tracing, missing extensions: %v", missing)
 	}
 
@@ -196,8 +200,8 @@ func main() {
 	const shaderGroupHandleAlignment = 32
 
 	// Create swapchain
-	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := asch.NewSwapchain(dev, gpu, device.Surface, windowSize)
+	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
+	swapchain, err := ash.NewSwapchain(dev, gpu, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -232,13 +236,13 @@ func main() {
 	tlasBuf, tlasMem, tlas := buildTLAS(dev, gpu, queue, cmdPool, model.blas)
 
 	// --- Create storage image ---
-	storageImg, err := asch.NewStorageImage(dev, gpu, queue, cmdPool, windowWidth, windowHeight, swapchain.DisplayFormat)
+	storageImg, err := ash.NewStorageImage(dev, gpu, queue, cmdPool, windowWidth, windowHeight, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// --- Uniform buffers ---
-	uniforms, err := asch.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
+	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -251,14 +255,14 @@ func main() {
 	raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem := createSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment)
 
 	// --- Sync objects ---
-	fence, semaphore, err := asch.NewSyncObjects(dev)
+	fence, semaphore, err := ash.NewSyncObjects(dev)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Match Sascha Willems raytracinggltf camera setup.
-	var projMatrix, viewMatrix asch.Mat4x4
-	setPerspectiveZO(&projMatrix, asch.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
+	var projMatrix, viewMatrix ash.Mat4x4
+	setPerspectiveZO(&projMatrix, ash.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
 	viewMatrix.Translate(0.0, -0.1, -1.0)
 
 	log.Println("Ray tracing initialized, starting render loop")
@@ -387,12 +391,12 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool
 
 				// Create GPU buffers with device address
 				rtUsage := vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit | vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit | vk.BufferUsageStorageBufferBit)
-				vertexBuf, vertexMem, err := asch.NewBufferWithDeviceAddress(dev, gpu, rtUsage,
+				vertexBuf, vertexMem, err := ash.NewBufferWithDeviceAddress(dev, gpu, rtUsage,
 					uint64(len(vertices)*4), unsafe.Pointer(&vertices[0]))
 				if err != nil {
 					log.Fatal(err)
 				}
-				indexBuf, indexMem, err := asch.NewBufferWithDeviceAddress(dev, gpu, rtUsage,
+				indexBuf, indexMem, err := ash.NewBufferWithDeviceAddress(dev, gpu, rtUsage,
 					uint64(len(indices)*4), unsafe.Pointer(&indices[0]))
 				if err != nil {
 					log.Fatal(err)
@@ -481,21 +485,21 @@ func gltfNodeTransform(node *gltf.Node) [16]float32 {
 	rotation := node.RotationOrDefault()
 	scale := node.ScaleOrDefault()
 
-	var t asch.Mat4x4
+	var t ash.Mat4x4
 	t.Translate(float32(translation[0]), float32(translation[1]), float32(translation[2]))
 
-	var r asch.Mat4x4
-	r.FromQuat(&asch.Quat{
+	var r ash.Mat4x4
+	r.FromQuat(&ash.Quat{
 		float32(rotation[0]),
 		float32(rotation[1]),
 		float32(rotation[2]),
 		float32(rotation[3]),
 	})
 
-	var rs asch.Mat4x4
+	var rs ash.Mat4x4
 	rs.ScaleAniso(&r, float32(scale[0]), float32(scale[1]), float32(scale[2]))
 
-	var trs asch.Mat4x4
+	var trs ash.Mat4x4
 	trs.Mult(&t, &rs)
 	return mat4ToArray(&trs)
 }
@@ -530,7 +534,7 @@ func gltfMatrixToArray(m [16]float64) [16]float32 {
 	return out
 }
 
-func mat4ToArray(m *asch.Mat4x4) [16]float32 {
+func mat4ToArray(m *ash.Mat4x4) [16]float32 {
 	var out [16]float32
 	for col := 0; col < 4; col++ {
 		for row := 0; row < 4; row++ {
@@ -540,7 +544,7 @@ func mat4ToArray(m *asch.Mat4x4) [16]float32 {
 	return out
 }
 
-func setPerspectiveZO(m *asch.Mat4x4, yFov, aspect, near, far float32) {
+func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 	f := float32(1.0 / math.Tan(float64(yFov)/2.0))
 
 	m[0][0] = f / aspect
@@ -568,13 +572,13 @@ func createGeometryNodesBuffer(dev vk.Device, gpu vk.PhysicalDevice, prims []pri
 	nodes := make([]geometryNode, len(prims))
 	for i := range prims {
 		nodes[i] = geometryNode{
-			VertexBufferDeviceAddress: uint64(asch.GetBufferDeviceAddress(dev, prims[i].vertexBuf)),
-			IndexBufferDeviceAddress:  uint64(asch.GetBufferDeviceAddress(dev, prims[i].indexBuf)),
+			VertexBufferDeviceAddress: uint64(ash.GetBufferDeviceAddress(dev, prims[i].vertexBuf)),
+			IndexBufferDeviceAddress:  uint64(ash.GetBufferDeviceAddress(dev, prims[i].indexBuf)),
 			TextureIndexBaseColor:     prims[i].baseColorTex,
 			TextureIndexOcclusion:     prims[i].occlusionTex,
 		}
 	}
-	buf, mem, err := asch.NewBufferWithDeviceAddress(dev, gpu,
+	buf, mem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit|vk.BufferUsageShaderDeviceAddressBit),
 		uint64(len(nodes))*uint64(unsafe.Sizeof(nodes[0])),
 		unsafe.Pointer(&nodes[0]))
@@ -648,19 +652,19 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 	for i := range prims {
 		transformMatrices[i] = prims[i].transform
 	}
-	transformBuf, transformMem, err := asch.NewBufferWithDeviceAddress(dev, gpu,
+	transformBuf, transformMem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit),
 		uint64(len(transformMatrices))*uint64(unsafe.Sizeof(transformMatrices[0])),
 		unsafe.Pointer(&transformMatrices[0]))
 	if err != nil {
 		log.Fatal(err)
 	}
-	transformAddr := asch.GetBufferDeviceAddress(dev, transformBuf)
+	transformAddr := ash.GetBufferDeviceAddress(dev, transformBuf)
 	transformStride := vk.DeviceAddress(unsafe.Sizeof(transformMatrices[0]))
 
 	for i := range prims {
-		vertexAddr := asch.GetBufferDeviceAddress(dev, prims[i].vertexBuf)
-		indexAddr := asch.GetBufferDeviceAddress(dev, prims[i].indexBuf)
+		vertexAddr := ash.GetBufferDeviceAddress(dev, prims[i].vertexBuf)
+		indexAddr := ash.GetBufferDeviceAddress(dev, prims[i].indexBuf)
 
 		var trianglesData vk.AccelerationStructureGeometryTrianglesData
 		trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
@@ -700,7 +704,7 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 	log.Printf("BLAS size: AS=%d, scratch=%d (geometries=%d)", sizeInfo.AccelerationStructureSize, sizeInfo.BuildScratchSize, len(geometries))
 
 	// Create AS buffer
-	asBuf, asMem, err := asch.NewDeviceLocalBuffer(dev, gpu,
+	asBuf, asMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit|vk.BufferUsageShaderDeviceAddressBit),
 		uint64(sizeInfo.AccelerationStructureSize))
 	if err != nil {
@@ -716,13 +720,13 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 	}
 
 	// Scratch buffer
-	scratchBuf, scratchMem, err := asch.NewDeviceLocalBuffer(dev, gpu,
+	scratchBuf, scratchMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit|vk.BufferUsageShaderDeviceAddressBit),
 		uint64(sizeInfo.BuildScratchSize))
 	if err != nil {
 		log.Fatal(err)
 	}
-	scratchAddr := asch.GetBufferDeviceAddress(dev, scratchBuf)
+	scratchAddr := ash.GetBufferDeviceAddress(dev, scratchBuf)
 
 	// Create a fresh struct for the build call (PassRef caches the C struct)
 	buildInfo2 := vk.AccelerationStructureBuildGeometryInfo{
@@ -766,13 +770,13 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 	instanceData[55] = 0x01 // VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR
 	*(*uint64)(unsafe.Pointer(&instanceData[56])) = uint64(blasAddr)
 
-	instanceBuf, instanceMem, err := asch.NewBufferWithDeviceAddress(dev, gpu,
+	instanceBuf, instanceMem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit),
 		uint64(len(instanceData)), unsafe.Pointer(&instanceData[0]))
 	if err != nil {
 		log.Fatal(err)
 	}
-	instanceAddr := asch.GetBufferDeviceAddress(dev, instanceBuf)
+	instanceAddr := ash.GetBufferDeviceAddress(dev, instanceBuf)
 
 	var instancesData vk.AccelerationStructureGeometryInstancesData
 	instancesData.SType = vk.StructureTypeAccelerationStructureGeometryInstancesData
@@ -799,7 +803,7 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 	sizeInfo.Deref()
 	log.Printf("TLAS size: AS=%d, scratch=%d (instances=1)", sizeInfo.AccelerationStructureSize, sizeInfo.BuildScratchSize)
 
-	asBuf, asMem, err := asch.NewDeviceLocalBuffer(dev, gpu,
+	asBuf, asMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit|vk.BufferUsageShaderDeviceAddressBit),
 		uint64(sizeInfo.AccelerationStructureSize))
 	if err != nil {
@@ -814,13 +818,13 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 		log.Fatal("CreateAccelerationStructure (TLAS):", err)
 	}
 
-	scratchBuf, scratchMem, err := asch.NewDeviceLocalBuffer(dev, gpu,
+	scratchBuf, scratchMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit|vk.BufferUsageShaderDeviceAddressBit),
 		uint64(sizeInfo.BuildScratchSize))
 	if err != nil {
 		log.Fatal(err)
 	}
-	scratchAddr := asch.GetBufferDeviceAddress(dev, scratchBuf)
+	scratchAddr := ash.GetBufferDeviceAddress(dev, scratchBuf)
 
 	buildInfo2 := vk.AccelerationStructureBuildGeometryInfo{
 		SType:                    vk.StructureTypeAccelerationStructureBuildGeometryInfo,
@@ -854,7 +858,7 @@ func destroyTexture(dev vk.Device, texture textureData) {
 }
 
 func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.CommandPool, width, height uint32, pixels []byte, samplerInfo vk.SamplerCreateInfo) textureData {
-	stagingBuf, stagingMem, err := asch.NewBufferWithDeviceAddress(dev, gpu, vk.BufferUsageFlags(vk.BufferUsageTransferSrcBit), uint64(len(pixels)), unsafe.Pointer(&pixels[0]))
+	stagingBuf, stagingMem, err := ash.NewBufferWithDeviceAddress(dev, gpu, vk.BufferUsageFlags(vk.BufferUsageTransferSrcBit), uint64(len(pixels)), unsafe.Pointer(&pixels[0]))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -1054,7 +1058,7 @@ func addressModeFromGLTF(mode gltf.WrappingMode) vk.SamplerAddressMode {
 	}
 }
 
-func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []textureData, uniforms *asch.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
+func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []textureData, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
 	textureCount := uint32(len(textures))
 	if textureCount == 0 {
 		log.Fatal("createDescriptorSets: texture array must contain at least the fallback texture")
@@ -1147,11 +1151,11 @@ func createRTPipeline(dev vk.Device, descLayout vk.DescriptorSetLayout) (vk.Pipe
 		PSetLayouts: []vk.DescriptorSetLayout{descLayout},
 	}, nil, &pipelineLayout)
 
-	raygenModule, _ := asch.LoadShaderFromBytes(dev, raygenShaderCode)
-	missModule, _ := asch.LoadShaderFromBytes(dev, missShaderCode)
-	shadowMissModule, _ := asch.LoadShaderFromBytes(dev, shadowMissShaderCode)
-	closestHitModule, _ := asch.LoadShaderFromBytes(dev, closestHitShaderCode)
-	anyHitModule, _ := asch.LoadShaderFromBytes(dev, anyHitShaderCode)
+	raygenModule, _ := ash.LoadShaderFromBytes(dev, raygenShaderCode)
+	missModule, _ := ash.LoadShaderFromBytes(dev, missShaderCode)
+	shadowMissModule, _ := ash.LoadShaderFromBytes(dev, shadowMissShaderCode)
+	closestHitModule, _ := ash.LoadShaderFromBytes(dev, closestHitShaderCode)
+	anyHitModule, _ := ash.LoadShaderFromBytes(dev, anyHitShaderCode)
 
 	stages := []vk.PipelineShaderStageCreateInfo{
 		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageRaygenBit), Module: raygenModule, PName: []byte("main\x00")},
@@ -1196,7 +1200,7 @@ func createRTPipeline(dev vk.Device, descLayout vk.DescriptorSetLayout) (vk.Pipe
 
 func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handleSize, handleAlignment uint32) (vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, vk.Buffer, vk.DeviceMemory) {
 	groupCount := uint32(4) // raygen, miss, shadow miss, hit
-	handleSizeAligned := asch.AlignUp(handleSize, handleAlignment)
+	handleSizeAligned := ash.AlignUp(handleSize, handleAlignment)
 	// Read all shader group handles
 	sbtSize := groupCount * handleSizeAligned
 	handleStorage := make([]byte, sbtSize)
@@ -1205,13 +1209,13 @@ func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handl
 	}
 
 	// Create single SBT buffer containing all groups
-	sbtBuf, sbtMem, err := asch.NewBufferWithDeviceAddress(dev, gpu,
+	sbtBuf, sbtMem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageShaderBindingTableBit|vk.BufferUsageShaderDeviceAddressBit),
 		uint64(sbtSize), unsafe.Pointer(&handleStorage[0]))
 	if err != nil {
 		log.Fatal(err)
 	}
-	sbtAddr := asch.GetBufferDeviceAddress(dev, sbtBuf)
+	sbtAddr := ash.GetBufferDeviceAddress(dev, sbtBuf)
 
 	raygenSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr, Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
 	missSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr + vk.DeviceAddress(handleSizeAligned), Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(2 * handleSizeAligned)}
@@ -1219,13 +1223,13 @@ func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handl
 	return raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
 	fence vk.Fence, semaphore vk.Semaphore,
 	pipeline vk.Pipeline, pipelineLayout vk.PipelineLayout,
-	descSets []vk.DescriptorSet, uniforms *asch.VulkanUniformBuffers,
+	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
 	storageImage vk.Image,
 	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
-	proj, view *asch.Mat4x4, lightPos [4]float32,
+	proj, view *ash.Mat4x4, lightPos [4]float32,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
@@ -1234,8 +1238,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	}
 
 	// Update uniform buffer with inverse matrices
-	projInv := asch.InvertMatrix(proj)
-	viewInv := asch.InvertMatrix(view)
+	projInv := ash.InvertMatrix(proj)
+	viewInv := ash.InvertMatrix(view)
 	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv, Frame: frameCounter, LightPos: lightPos}
 	uniforms.Update(nextIdx, ubo.Bytes())
 	frameCounter++

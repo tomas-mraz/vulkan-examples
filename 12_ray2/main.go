@@ -20,7 +20,7 @@ import (
 	"github.com/qmuntal/gltf"
 	"github.com/qmuntal/gltf/modeler"
 	vk "github.com/tomas-mraz/vulkan"
-	asch "github.com/tomas-mraz/vulkan-ash"
+	ash "github.com/tomas-mraz/vulkan-ash"
 )
 
 //go:embed shaders/raygen.rgen.spv
@@ -47,8 +47,8 @@ const (
 var frameCounter uint32
 
 type uniformData struct {
-	ViewInverse asch.Mat4x4
-	ProjInverse asch.Mat4x4
+	ViewInverse ash.Mat4x4
+	ProjInverse ash.Mat4x4
 	Frame       uint32
 }
 
@@ -120,18 +120,8 @@ func main() {
 	defer window.Destroy()
 
 	// Create device with ray tracing extensions
-	asch.SetDebug(false)
+	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
-
-	rtExtensions := []string{
-		"VK_KHR_acceleration_structure\x00",
-		"VK_KHR_ray_tracing_pipeline\x00",
-		"VK_KHR_buffer_device_address\x00",
-		"VK_KHR_deferred_host_operations\x00",
-		"VK_EXT_descriptor_indexing\x00",
-		"VK_KHR_spirv_1_4\x00",
-		"VK_KHR_shader_float_controls\x00",
-	}
 
 	// Enable required features via pNext chain
 	bufferDeviceAddressFeatures := vk.PhysicalDeviceBufferDeviceAddressFeatures{
@@ -161,14 +151,14 @@ func main() {
 		ShaderStorageImageWriteWithoutFormat: vk.True,
 	}
 
-	device, err := asch.NewDeviceWithOptions(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
+	device, err := ash.NewDeviceWithOptions(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
 		surfPtr, err := window.CreateWindowSurface(instance, nil)
 		if err != nil {
 			return vk.NullSurface, err
 		}
 		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0, &asch.DeviceOptions{
-		DeviceExtensions: rtExtensions,
+	}, 0, &ash.DeviceOptions{
+		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
 		EnabledFeatures:  &enabledFeatures,
 		ApiVersion:       vk.MakeVersion(1, 2, 0),
@@ -185,8 +175,8 @@ func main() {
 	const shaderGroupHandleAlignment = 32
 
 	// Create swapchain
-	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := asch.NewSwapchain(dev, gpu, device.Surface, windowSize)
+	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
+	swapchain, err := ash.NewSwapchain(dev, gpu, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -224,7 +214,7 @@ func main() {
 	storageImage, storageImageMem, storageImageView := createStorageImage(dev, gpu, queue, cmdPool, windowWidth, windowHeight, swapchain.DisplayFormat)
 
 	// --- Uniform buffers ---
-	uniforms, err := asch.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
+	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -243,8 +233,8 @@ func main() {
 	}
 
 	// Match Sascha Willems raytracinggltf camera setup.
-	var projMatrix, viewMatrix asch.Mat4x4
-	setPerspectiveZO(&projMatrix, asch.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
+	var projMatrix, viewMatrix ash.Mat4x4
+	setPerspectiveZO(&projMatrix, ash.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
 	viewMatrix.Translate(0.0, -0.1, -1.0)
 
 	log.Println("Ray tracing initialized, starting render loop")
@@ -255,8 +245,8 @@ func main() {
 
 		// Rotate the view around Y axis (like 06_model)
 		elapsed := float32(time.Since(startTime).Seconds()) * 45.0
-		var rotatedView asch.Mat4x4
-		rotatedView.Rotate(&viewMatrix, 0.0, 1.0, 0.0, asch.DegreesToRadians(elapsed))
+		var rotatedView ash.Mat4x4
+		rotatedView.Rotate(&viewMatrix, 0.0, 1.0, 0.0, ash.DegreesToRadians(elapsed))
 		frameCounter = 0 // reset accumulation — camera changed
 
 		if !drawFrame(dev, queue, swapchain, cmdBuffers, fence, semaphore,
@@ -458,21 +448,21 @@ func gltfNodeTransform(node *gltf.Node) [16]float32 {
 	rotation := node.RotationOrDefault()
 	scale := node.ScaleOrDefault()
 
-	var t asch.Mat4x4
+	var t ash.Mat4x4
 	t.Translate(float32(translation[0]), float32(translation[1]), float32(translation[2]))
 
-	var r asch.Mat4x4
-	r.FromQuat(&asch.Quat{
+	var r ash.Mat4x4
+	r.FromQuat(&ash.Quat{
 		float32(rotation[0]),
 		float32(rotation[1]),
 		float32(rotation[2]),
 		float32(rotation[3]),
 	})
 
-	var rs asch.Mat4x4
+	var rs ash.Mat4x4
 	rs.ScaleAniso(&r, float32(scale[0]), float32(scale[1]), float32(scale[2]))
 
-	var trs asch.Mat4x4
+	var trs ash.Mat4x4
 	trs.Mult(&t, &rs)
 	return mat4ToArray(&trs)
 }
@@ -493,7 +483,7 @@ func gltfMatrixToArray(m [16]float64) [16]float32 {
 	return out
 }
 
-func mat4ToArray(m *asch.Mat4x4) [16]float32 {
+func mat4ToArray(m *ash.Mat4x4) [16]float32 {
 	var out [16]float32
 	for col := 0; col < 4; col++ {
 		for row := 0; row < 4; row++ {
@@ -503,7 +493,7 @@ func mat4ToArray(m *asch.Mat4x4) [16]float32 {
 	return out
 }
 
-func setPerspectiveZO(m *asch.Mat4x4, yFov, aspect, near, far float32) {
+func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 	f := float32(1.0 / math.Tan(float64(yFov)/2.0))
 
 	m[0][0] = f / aspect
@@ -1119,7 +1109,7 @@ func addressModeFromGLTF(mode gltf.WrappingMode) vk.SamplerAddressMode {
 	}
 }
 
-func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []textureData, uniforms *asch.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
+func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []textureData, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
 	textureCount := uint32(len(textures))
 	if textureCount == 0 {
 		log.Fatal("createDescriptorSets: texture array must contain at least the fallback texture")
@@ -1212,11 +1202,11 @@ func createRTPipeline(dev vk.Device, descLayout vk.DescriptorSetLayout) (vk.Pipe
 		PSetLayouts: []vk.DescriptorSetLayout{descLayout},
 	}, nil, &pipelineLayout)
 
-	raygenModule, _ := asch.LoadShaderFromBytes(dev, raygenShaderCode)
-	missModule, _ := asch.LoadShaderFromBytes(dev, missShaderCode)
-	shadowMissModule, _ := asch.LoadShaderFromBytes(dev, shadowMissShaderCode)
-	closestHitModule, _ := asch.LoadShaderFromBytes(dev, closestHitShaderCode)
-	anyHitModule, _ := asch.LoadShaderFromBytes(dev, anyHitShaderCode)
+	raygenModule, _ := ash.LoadShaderFromBytes(dev, raygenShaderCode)
+	missModule, _ := ash.LoadShaderFromBytes(dev, missShaderCode)
+	shadowMissModule, _ := ash.LoadShaderFromBytes(dev, shadowMissShaderCode)
+	closestHitModule, _ := ash.LoadShaderFromBytes(dev, closestHitShaderCode)
+	anyHitModule, _ := ash.LoadShaderFromBytes(dev, anyHitShaderCode)
 
 	stages := []vk.PipelineShaderStageCreateInfo{
 		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageRaygenBit), Module: raygenModule, PName: []byte("main\x00")},
@@ -1297,14 +1287,13 @@ func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
 	return fence, sem, nil
 }
 
-
-func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
 	fence vk.Fence, semaphore vk.Semaphore,
 	pipeline vk.Pipeline, pipelineLayout vk.PipelineLayout,
-	descSets []vk.DescriptorSet, uniforms *asch.VulkanUniformBuffers,
+	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
 	storageImage vk.Image,
 	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
-	proj, view *asch.Mat4x4,
+	proj, view *ash.Mat4x4,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
@@ -1313,8 +1302,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, cmdBuf
 	}
 
 	// Update uniform buffer with inverse matrices
-	projInv := asch.InvertMatrix(proj)
-	viewInv := asch.InvertMatrix(view)
+	projInv := ash.InvertMatrix(proj)
+	viewInv := ash.InvertMatrix(view)
 	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv, Frame: frameCounter}
 	uniforms.Update(nextIdx, ubo.Bytes())
 	frameCounter++
