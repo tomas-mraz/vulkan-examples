@@ -8,8 +8,6 @@ import (
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
-	"github.com/qmuntal/gltf"
-	"github.com/qmuntal/gltf/modeler"
 	vk "github.com/tomas-mraz/vulkan"
 	asch "github.com/tomas-mraz/vulkan-ash"
 	lin "github.com/xlab/linmath"
@@ -62,9 +60,12 @@ func main() {
 	}
 	defer window.Destroy()
 
-	// Load model via qmuntal/gltf
-	interleaved, indices := loadGLTF("teapot.gltf")
-	log.Printf("Loaded model: %d vertices, %d indices", len(interleaved)/6, len(indices))
+	// Load model
+	model, err := asch.LoadModel("teapot.gltf")
+	if err != nil {
+		log.Fatal("LoadModel:", err)
+	}
+	log.Printf("Loaded model: %d vertices, %d indices", model.VertexCount(), model.IndexCount())
 
 	// Vulkan init
 	asch.SetDebug(false)
@@ -104,11 +105,11 @@ func main() {
 	}
 
 	// Vertex + index buffers
-	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, interleaved)
+	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, model.Vertices)
 	if err != nil {
 		log.Fatal(err)
 	}
-	indexBuf, err := asch.NewIndexBuffer(device.Device, device.GpuDevice, indices)
+	indexBuf, err := asch.NewIndexBuffer32(device.Device, device.GpuDevice, model.Indices)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -198,53 +199,6 @@ func main() {
 	}
 	vk.DestroySurface(device.Instance, device.Surface, nil)
 	vk.DestroyInstance(device.Instance, nil)
-}
-
-// --- glTF loading ---
-
-func loadGLTF(path string) (interleaved []float32, indices []uint16) {
-	doc, err := gltf.Open(path)
-	if err != nil {
-		log.Fatal("gltf.Open:", err)
-	}
-
-	prim := doc.Meshes[0].Primitives[0]
-
-	// Read positions
-	posAccIdx := prim.Attributes[gltf.POSITION]
-	positions, err := modeler.ReadPosition(doc, doc.Accessors[posAccIdx], nil)
-	if err != nil {
-		log.Fatal("ReadPosition:", err)
-	}
-
-	// Read normals
-	normAccIdx := prim.Attributes[gltf.NORMAL]
-	normals, err := modeler.ReadNormal(doc, doc.Accessors[normAccIdx], nil)
-	if err != nil {
-		log.Fatal("ReadNormal:", err)
-	}
-
-	// Read indices (returned as uint32, convert to uint16)
-	indices32, err := modeler.ReadIndices(doc, doc.Accessors[*prim.Indices], nil)
-	if err != nil {
-		log.Fatal("ReadIndices:", err)
-	}
-	indices = make([]uint16, len(indices32))
-	for i, v := range indices32 {
-		indices[i] = uint16(v)
-	}
-
-	// Interleave position + normal (6 floats per vertex)
-	interleaved = make([]float32, len(positions)*6)
-	for i := range positions {
-		interleaved[i*6+0] = positions[i][0]
-		interleaved[i*6+1] = positions[i][1]
-		interleaved[i*6+2] = positions[i][2]
-		interleaved[i*6+3] = normals[i][0]
-		interleaved[i*6+4] = normals[i][1]
-		interleaved[i*6+5] = normals[i][2]
-	}
-	return
 }
 
 // --- Vulkan helpers ---
@@ -340,7 +294,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	vk.CmdBindPipeline(cmd, vk.PipelineBindPointGraphics, gfx.GetPipeline())
 	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointGraphics, gfx.GetLayout(), 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
 	vk.CmdBindVertexBuffers(cmd, 0, 1, []vk.Buffer{vertexBuf.DefaultVertexBuffer()}, []vk.DeviceSize{0})
-	vk.CmdBindIndexBuffer(cmd, indexBuf.GetBuffer(), 0, vk.IndexTypeUint16)
+	vk.CmdBindIndexBuffer(cmd, indexBuf.GetBuffer(), 0, vk.IndexTypeUint32)
 	vk.CmdDrawIndexed(cmd, indexBuf.GetCount(), 1, 0, 0, 0)
 	vk.CmdEndRenderPass(cmd)
 	vk.EndCommandBuffer(cmd)
