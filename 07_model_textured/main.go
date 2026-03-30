@@ -67,7 +67,7 @@ func main() {
 	log.Printf("Loaded model: %d vertices, %d indices, texture %dx%d", model.VertexCount(), model.IndexCount(), model.TextureWidth, model.TextureHeight)
 
 	// Vulkan init
-	var cleanup asch.Destroyer
+	var cleanup asch.Cleanup
 
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -81,21 +81,21 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(device.Destroy)
+	cleanup.Add(&device)
 
 	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := asch.NewSwapchain(device.Device, device.GpuDevice, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(swapchain.Destroy)
+	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	depth, err := asch.NewDepthBuffer(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD32Sfloat)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(depth.Destroy)
+	cleanup.Add(&depth)
 
 	renderer, err := asch.NewRendererWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
@@ -107,26 +107,26 @@ func main() {
 	if err := renderer.CreateCommandBuffers(swapchainLen); err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(renderer.Destroy)
+	cleanup.Add(&renderer)
 
 	// Buffers
 	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, model.Vertices)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(vertexBuf.Destroy)
+	cleanup.Add(&vertexBuf)
 	indexBuf, err := asch.NewIndexBuffer32(device.Device, device.GpuDevice, model.Indices)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(indexBuf.Destroy)
+	cleanup.Add(&indexBuf)
 
 	// Texture
 	texture, err := asch.NewTexture(device.Device, device.GpuDevice, model.TextureWidth, model.TextureHeight, model.TextureRGBA)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(texture.Destroy)
+	cleanup.Add(&texture)
 	asch.TransitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(),
 		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
@@ -135,15 +135,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(uniforms.Destroy)
+	cleanup.Add(&uniforms)
 
 	// Descriptors (UBO + texture)
-	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, &uniforms, texture)
+	desc, err := asch.NewDescriptorUBOTexture(device.Device, &uniforms, &texture, swapchainLen)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(func() { vk.DestroyDescriptorSetLayout(device.Device, descLayout, nil) })
-	cleanup.Add(func() { vk.DestroyDescriptorPool(device.Device, descPool, nil) })
+	cleanup.Add(&desc)
 
 	// Pipeline
 	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
@@ -153,24 +152,23 @@ func main() {
 			Binding: 0, Stride: 8 * 4, InputRate: vk.VertexInputRateVertex, // pos3+norm3+uv2
 		}},
 		VertexAttributes: []vk.VertexInputAttributeDescription{
-			{Binding: 0, Location: 0, Format: vk.FormatR32g32b32Sfloat, Offset: 0},      // position
-			{Binding: 0, Location: 1, Format: vk.FormatR32g32b32Sfloat, Offset: 3 * 4},   // normal
-			{Binding: 0, Location: 2, Format: vk.FormatR32g32Sfloat, Offset: 6 * 4},       // texcoord
+			{Binding: 0, Location: 0, Format: vk.FormatR32g32b32Sfloat, Offset: 0},     // position
+			{Binding: 0, Location: 1, Format: vk.FormatR32g32b32Sfloat, Offset: 3 * 4}, // normal
+			{Binding: 0, Location: 2, Format: vk.FormatR32g32Sfloat, Offset: 6 * 4},    // texcoord
 		},
-		DescriptorSetLayouts: []vk.DescriptorSetLayout{descLayout},
+		DescriptorSetLayouts: []vk.DescriptorSetLayout{desc.GetLayout()},
 		DepthTestEnable:      true,
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(gfx.Destroy)
+	cleanup.Add(&gfx)
 
-	fence, semaphore, err := createSyncObjects(device.Device)
+	sync, err := asch.NewSyncObjects(device.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(func() { vk.DestroyFence(device.Device, fence, nil) })
-	cleanup.Add(func() { vk.DestroySemaphore(device.Device, semaphore, nil) })
+	cleanup.Add(&sync)
 
 	// Camera
 	var projMatrix, viewMatrix lin.Mat4x4
@@ -192,7 +190,7 @@ func main() {
 		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, lin.DegreesToRadians(elapsed))
 
 		if !drawFrame(device.Device, device.Queue, swapchain, renderer,
-			fence, semaphore, gfx, descSets, &uniforms,
+			sync.Fence, sync.Semaphore, gfx, desc.GetSets(), &uniforms,
 			vertexBuf, indexBuf,
 			&projMatrix, &viewMatrix, &modelMatrix) {
 			break
@@ -200,68 +198,6 @@ func main() {
 	}
 
 	cleanup.Destroy()
-}
-
-// --- Vulkan helpers ---
-
-func createDescriptors(dev vk.Device, count uint32, uniforms *asch.VulkanUniformBuffers, tex asch.VulkanTextureInfo) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet, error) {
-	var layout vk.DescriptorSetLayout
-	if err := vk.Error(vk.CreateDescriptorSetLayout(dev, &vk.DescriptorSetLayoutCreateInfo{
-		SType: vk.StructureTypeDescriptorSetLayoutCreateInfo, BindingCount: 2,
-		PBindings: []vk.DescriptorSetLayoutBinding{
-			{Binding: 0, DescriptorType: vk.DescriptorTypeUniformBuffer, DescriptorCount: 1,
-				StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), PImmutableSamplers: []vk.Sampler{vk.NullSampler}},
-			{Binding: 1, DescriptorType: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: 1,
-				StageFlags: vk.ShaderStageFlags(vk.ShaderStageFragmentBit), PImmutableSamplers: []vk.Sampler{tex.GetSampler()}},
-		},
-	}, nil, &layout)); err != nil {
-		return layout, nil, nil, err
-	}
-
-	var pool vk.DescriptorPool
-	if err := vk.Error(vk.CreateDescriptorPool(dev, &vk.DescriptorPoolCreateInfo{
-		SType: vk.StructureTypeDescriptorPoolCreateInfo, MaxSets: count, PoolSizeCount: 2,
-		PPoolSizes: []vk.DescriptorPoolSize{
-			{Type: vk.DescriptorTypeUniformBuffer, DescriptorCount: count},
-			{Type: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: count},
-		},
-	}, nil, &pool)); err != nil {
-		return layout, pool, nil, err
-	}
-
-	sets := make([]vk.DescriptorSet, count)
-	for i := uint32(0); i < count; i++ {
-		if err := vk.Error(vk.AllocateDescriptorSets(dev, &vk.DescriptorSetAllocateInfo{
-			SType: vk.StructureTypeDescriptorSetAllocateInfo, DescriptorPool: pool,
-			DescriptorSetCount: 1, PSetLayouts: []vk.DescriptorSetLayout{layout},
-		}, &sets[i])); err != nil {
-			return layout, pool, sets, err
-		}
-	}
-
-	for i := uint32(0); i < count; i++ {
-		vk.UpdateDescriptorSets(dev, 2, []vk.WriteDescriptorSet{
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 0, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeUniformBuffer,
-				PBufferInfo:    []vk.DescriptorBufferInfo{{Buffer: uniforms.GetBuffer(i), Offset: 0, Range: vk.DeviceSize(uboSize)}}},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 1, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeCombinedImageSampler,
-				PImageInfo:     []vk.DescriptorImageInfo{{Sampler: tex.GetSampler(), ImageView: tex.GetView(), ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal}}},
-		}, 0, nil)
-	}
-	return layout, pool, sets, nil
-}
-
-func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
-	var fence vk.Fence
-	var sem vk.Semaphore
-	if err := vk.Error(vk.CreateFence(dev, &vk.FenceCreateInfo{SType: vk.StructureTypeFenceCreateInfo}, nil, &fence)); err != nil {
-		return fence, sem, err
-	}
-	if err := vk.Error(vk.CreateSemaphore(dev, &vk.SemaphoreCreateInfo{SType: vk.StructureTypeSemaphoreCreateInfo}, nil, &sem)); err != nil {
-		return fence, sem, err
-	}
-	return fence, sem, nil
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
