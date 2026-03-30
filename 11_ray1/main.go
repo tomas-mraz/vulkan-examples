@@ -131,13 +131,18 @@ func main() {
 	indices := []uint32{0, 1, 2}
 
 	// Create vertex buffer with device address
-	vertexBuf := createBufferWithAddress2(dev, gpu, indices,
-		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit|vk.BufferUsageStorageBufferBit), vertices)
+	rtUsage := vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit | vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit | vk.BufferUsageStorageBufferBit)
+	vertexBuf, err := ash.NewBufferHostVisible(dev, gpu, vertices, true, rtUsage)
+	if err != nil {
+		log.Fatal("NewBufferHostVisible:", err)
+	}
 	cleanup.Add(&vertexBuf)
 	vertexAddr := vertexBuf.DeviceAddress
 
-	indexBuf := createBufferWithAddress2(dev, gpu, indices,
-		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit|vk.BufferUsageStorageBufferBit))
+	indexBuf, err := ash.NewBufferHostVisible(dev, gpu, indices, true, rtUsage)
+	if err != nil {
+		log.Fatal("NewBufferHostVisible:", err)
+	}
 	cleanup.Add(&indexBuf)
 	indexAddr := indexBuf.DeviceAddress
 
@@ -213,24 +218,8 @@ func main() {
 
 // --- Helper functions ---
 
-func createBufferWithAddress(dev vk.Device, gpu vk.PhysicalDevice, data []byte, usage vk.BufferUsageFlags) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferHostVisible(dev, gpu, data, true, usage)
-	if err != nil {
-		log.Fatal("NewBufferHostVisible:", err)
-	}
-	return buf
-}
-
-func createBufferWithAddress2(dev vk.Device, gpu vk.PhysicalDevice, data []uint32, usage vk.BufferUsageFlags) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferHostVisible(dev, gpu, data, true, usage)
-	if err != nil {
-		log.Fatal("NewBufferHostVisible:", err)
-	}
-	return buf
-}
-
 func createDeviceLocalBuffer(dev vk.Device, gpu vk.PhysicalDevice, usage vk.BufferUsageFlags, size uint64) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferDeviceLocal(dev, gpu, usage, size, true)
+	buf, err := ash.NewBufferDeviceLocal(dev, gpu, size, true, usage)
 	if err != nil {
 		log.Fatal("NewBufferResourceDeviceLocal:", err)
 	}
@@ -363,8 +352,11 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	// accelerationStructureReference (uint64)
 	*(*uint64)(unsafe.Pointer(&instanceData[56])) = uint64(blasAddr)
 
-	instanceBuf := createBufferWithAddress(dev, gpu, instanceData,
+	instanceBuf, err := ash.NewBufferHostVisible(dev, gpu, instanceData, true,
 		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit))
+	if err != nil {
+		log.Fatal("NewBufferHostVisible:", err)
+	}
 	instanceAddr := instanceBuf.DeviceAddress
 
 	var instancesData vk.AccelerationStructureGeometryInstancesData
@@ -594,8 +586,11 @@ func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handl
 	}
 
 	// Create single SBT buffer containing all groups
-	sbtBuf := createBufferWithAddress(dev, gpu, handleStorage,
+	sbtBuf, err := ash.NewBufferHostVisible(dev, gpu, handleStorage, true,
 		vk.BufferUsageFlags(vk.BufferUsageShaderBindingTableBit|vk.BufferUsageShaderDeviceAddressBit))
+	if err != nil {
+		log.Fatal("NewBufferHostVisible:", err)
+	}
 	sbtAddr := sbtBuf.DeviceAddress
 
 	raygenSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr, Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
