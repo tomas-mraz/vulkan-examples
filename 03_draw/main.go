@@ -104,7 +104,66 @@ func main() {
 	for !window.ShouldClose() {
 		glfw.PollEvents()
 		if window.GetAttrib(glfw.Iconified) != 1 {
-			asch.DrawFrame(device.Device, device.Queue, swapchain, renderer)
+			if !drawFrame(device.Device, device.Queue, swapchain, renderer) {
+				break
+			}
 		}
 	}
+}
+
+func drawFrame(device vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, r asch.VulkanRenderInfo) bool {
+	var nextIdx uint32
+
+	ret := vk.AcquireNextImage(device, s.DefaultSwapchain(), vk.MaxUint64, r.DefaultSemaphore(), vk.NullFence, &nextIdx)
+	if ret == vk.Suboptimal || ret == vk.ErrorOutOfDate {
+		log.Println("AcquireNextImage returned Suboptimal or ErrorOutOfDate")
+	}
+	if ret != vk.Success && ret != vk.Suboptimal {
+		if err := vk.Error(ret); err != nil {
+			log.Println("AcquireNextImage:", err)
+		}
+		return false
+	}
+
+	waitStages := []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)}
+	fences := []vk.Fence{r.DefaultFence()}
+	semaphores := []vk.Semaphore{r.DefaultSemaphore()}
+	cmdBuffers := r.GetCmdBuffers()
+
+	vk.ResetFences(device, 1, fences)
+	submitInfo := []vk.SubmitInfo{{
+		SType:              vk.StructureTypeSubmitInfo,
+		WaitSemaphoreCount: 1,
+		PWaitSemaphores:    semaphores,
+		PWaitDstStageMask:  waitStages,
+		CommandBufferCount: 1,
+		PCommandBuffers:    cmdBuffers[nextIdx:],
+	}}
+	if err := vk.Error(vk.QueueSubmit(queue, 1, submitInfo, r.DefaultFence())); err != nil {
+		log.Println("QueueSubmit:", err)
+		return false
+	}
+
+	const timeoutNano = 10 * 1000 * 1000 * 1000
+	if err := vk.Error(vk.WaitForFences(device, 1, fences, vk.True, timeoutNano)); err != nil {
+		log.Println("WaitForFences:", err)
+		return false
+	}
+
+	ret = vk.QueuePresent(queue, &vk.PresentInfo{
+		SType:          vk.StructureTypePresentInfo,
+		SwapchainCount: 1,
+		PSwapchains:    s.Swapchains,
+		PImageIndices:  []uint32{nextIdx},
+	})
+	if ret == vk.Suboptimal || ret == vk.ErrorOutOfDate {
+		log.Println("QueuePresent returned Suboptimal or ErrorOutOfDate")
+	}
+	if ret != vk.Success {
+		if err := vk.Error(ret); err != nil {
+			log.Println("QueuePresent:", err)
+		}
+		return false
+	}
+	return true
 }
