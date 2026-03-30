@@ -121,11 +121,14 @@ func main() {
 	}
 	defer window.Destroy()
 
+	var cleanup ash.Cleanup
+	defer cleanup.Destroy()
+
 	// Create device with ray tracing extensions
 	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 
-	rtExtensions := []string{
+	_ = []string{
 		"VK_KHR_acceleration_structure\x00",
 		"VK_KHR_ray_tracing_pipeline\x00",
 		"VK_KHR_buffer_device_address\x00",
@@ -182,6 +185,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&device)
 	dev := device.Device
 	gpu := device.GpuDevice
 	queue := device.Queue
@@ -205,6 +209,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	// Create command pool
@@ -227,38 +232,84 @@ func main() {
 	}, cmdBuffers)); err != nil {
 		log.Fatal("AllocateCommandBuffers:", err)
 	}
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.FreeCommandBuffers(dev, cmdPool, swapchainLen, cmdBuffers)
+		vk.DestroyCommandPool(dev, cmdPool, nil)
+	}))
 
 	// --- Load glTF model ---
 	model := loadGLTFModel(dev, gpu, queue, cmdPool, "assets/FlightHelmet/FlightHelmet.gltf")
 	log.Printf("Loaded %d primitives into one BLAS", len(model.primitives))
+	cleanup.Add(ash.DestroyerFunc(func() {
+		for i := range model.primitives {
+			vk.DestroyBuffer(dev, model.primitives[i].indexBuf, nil)
+			vk.FreeMemory(dev, model.primitives[i].indexMem, nil)
+			vk.DestroyBuffer(dev, model.primitives[i].vertexBuf, nil)
+			vk.FreeMemory(dev, model.primitives[i].vertexMem, nil)
+		}
+	}))
+	cleanup.Add(ash.DestroyerFunc(func() {
+		for i := range model.textures {
+			destroyTexture(dev, model.textures[i])
+		}
+	}))
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyBuffer(dev, model.geometryBuf, nil)
+		vk.FreeMemory(dev, model.geometryMem, nil)
+	}))
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyAccelerationStructure(dev, model.blas, nil)
+		vk.DestroyBuffer(dev, model.blasBuf, nil)
+		vk.FreeMemory(dev, model.blasMem, nil)
+	}))
 
 	// --- Build TLAS with one instance for the model BLAS ---
 	tlasBuf, tlasMem, tlas := buildTLAS(dev, gpu, queue, cmdPool, model.blas)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyAccelerationStructure(dev, tlas, nil)
+		vk.DestroyBuffer(dev, tlasBuf, nil)
+		vk.FreeMemory(dev, tlasMem, nil)
+	}))
 
 	// --- Create storage image ---
 	storageImg, err := ash.NewStorageImage(dev, gpu, queue, cmdPool, windowWidth, windowHeight, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&storageImg)
 
 	// --- Uniform buffers ---
 	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
 	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), model.geometryBuf, model.textures, &uniforms)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyDescriptorPool(dev, descPool, nil)
+		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
+	}))
 	// --- RT Pipeline ---
 	pipelineLayout, pipeline := createRTPipeline(dev, descLayout)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyPipeline(dev, pipeline, nil)
+		vk.DestroyPipelineLayout(dev, pipelineLayout, nil)
+	}))
 	// --- Shader Binding Table ---
 	raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem := createSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyBuffer(dev, sbtBuf, nil)
+		vk.FreeMemory(dev, sbtMem, nil)
+	}))
 
 	// --- Sync objects ---
-	fence, semaphore, err := ash.NewSyncObjects(dev)
+	sync, err := ash.NewSyncObjects(dev)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&sync)
 
 	// Match Sascha Willems raytracinggltf camera setup.
 	var projMatrix, viewMatrix ash.Mat4x4
@@ -280,7 +331,7 @@ func main() {
 		lightPos := [4]float32{lightX, 0.15, lightZ, 0.0}
 		frameCounter = 0 // reset accumulation — light moved
 
-		if !drawFrame(dev, queue, swapchain, cmdBuffers, fence, semaphore,
+		if !drawFrame(dev, queue, swapchain, cmdBuffers, sync.Fence, sync.Semaphore,
 			pipeline, pipelineLayout, descSets, &uniforms,
 			storageImg.GetImage(), &raygenSBT, &missSBT, &hitSBT,
 			&projMatrix, &viewMatrix, lightPos) {
@@ -288,44 +339,6 @@ func main() {
 		}
 	}
 
-	// Cleanup
-	vk.DeviceWaitIdle(dev)
-	vk.DestroySemaphore(dev, semaphore, nil)
-	vk.DestroyFence(dev, fence, nil)
-	vk.DestroyPipeline(dev, pipeline, nil)
-	vk.DestroyPipelineLayout(dev, pipelineLayout, nil)
-	vk.DestroyDescriptorPool(dev, descPool, nil)
-	vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
-	uniforms.Destroy()
-	vk.DestroyBuffer(dev, sbtBuf, nil)
-	vk.FreeMemory(dev, sbtMem, nil)
-	storageImg.Destroy()
-	for i := range model.textures {
-		destroyTexture(dev, model.textures[i])
-	}
-	vk.DestroyAccelerationStructure(dev, tlas, nil)
-	vk.DestroyBuffer(dev, tlasBuf, nil)
-	vk.FreeMemory(dev, tlasMem, nil)
-	vk.DestroyAccelerationStructure(dev, model.blas, nil)
-	vk.DestroyBuffer(dev, model.blasBuf, nil)
-	vk.FreeMemory(dev, model.blasMem, nil)
-	vk.DestroyBuffer(dev, model.geometryBuf, nil)
-	vk.FreeMemory(dev, model.geometryMem, nil)
-	for i := range model.primitives {
-		vk.DestroyBuffer(dev, model.primitives[i].indexBuf, nil)
-		vk.FreeMemory(dev, model.primitives[i].indexMem, nil)
-		vk.DestroyBuffer(dev, model.primitives[i].vertexBuf, nil)
-		vk.FreeMemory(dev, model.primitives[i].vertexMem, nil)
-	}
-	vk.FreeCommandBuffers(dev, cmdPool, swapchainLen, cmdBuffers)
-	vk.DestroyCommandPool(dev, cmdPool, nil)
-	swapchain.Destroy()
-	vk.DestroyDevice(dev, nil)
-	if device.GetDebugCallback() != vk.NullDebugReportCallback {
-		vk.DestroyDebugReportCallback(device.Instance, device.GetDebugCallback(), nil)
-	}
-	vk.DestroySurface(device.Instance, device.Surface, nil)
-	vk.DestroyInstance(device.Instance, nil)
 }
 
 // --- glTF loading ---

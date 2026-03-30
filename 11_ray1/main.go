@@ -60,6 +60,9 @@ func main() {
 	}
 	defer window.Destroy()
 
+	var cleanup ash.Cleanup
+	defer cleanup.Destroy()
+
 	// Create device with ray tracing extensions
 	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -94,6 +97,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&device)
 	dev := device.Device
 	gpu := device.GpuDevice
 	queue := device.Queue
@@ -108,6 +112,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	// Create command pool
@@ -130,6 +135,10 @@ func main() {
 	}, cmdBuffers)); err != nil {
 		log.Fatal("AllocateCommandBuffers:", err)
 	}
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.FreeCommandBuffers(dev, cmdPool, swapchainLen, cmdBuffers)
+		vk.DestroyCommandPool(dev, cmdPool, nil)
+	}))
 
 	// --- Create scene geometry (triangle) ---
 	// Triangle vertices: position (xyz)
@@ -144,38 +153,66 @@ func main() {
 	vertexBuf, vertexMem := createBufferWithAddress(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit|vk.BufferUsageStorageBufferBit),
 		uint64(len(vertices)*4), unsafe.Pointer(&vertices[0]))
+	cleanup.Add(ash.DestroyerFunc(func() { vk.DestroyBuffer(dev, vertexBuf, nil); vk.FreeMemory(dev, vertexMem, nil) }))
 	vertexAddr := getBufferAddress(dev, vertexBuf)
 
 	indexBuf, indexMem := createBufferWithAddress(dev, gpu,
 		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit|vk.BufferUsageStorageBufferBit),
 		uint64(len(indices)*4), unsafe.Pointer(&indices[0]))
+	cleanup.Add(ash.DestroyerFunc(func() { vk.DestroyBuffer(dev, indexBuf, nil); vk.FreeMemory(dev, indexMem, nil) }))
 	indexAddr := getBufferAddress(dev, indexBuf)
 
 	// --- Build BLAS ---
 	blasBuf, blasMem, blas := buildBLAS(dev, gpu, queue, cmdPool, vertexAddr, indexAddr, 3, 1)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyAccelerationStructure(dev, blas, nil)
+		vk.DestroyBuffer(dev, blasBuf, nil)
+		vk.FreeMemory(dev, blasMem, nil)
+	}))
 	// --- Build TLAS ---
 	tlasBuf, tlasMem, tlas := buildTLAS(dev, gpu, queue, cmdPool, blas)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyAccelerationStructure(dev, tlas, nil)
+		vk.DestroyBuffer(dev, tlasBuf, nil)
+		vk.FreeMemory(dev, tlasMem, nil)
+	}))
 	// --- Create storage image ---
 	storageImage, storageImageMem, storageImageView := createStorageImage(dev, gpu, queue, cmdPool, windowWidth, windowHeight, swapchain.DisplayFormat)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyImageView(dev, storageImageView, nil)
+		vk.DestroyImage(dev, storageImage, nil)
+		vk.FreeMemory(dev, storageImageMem, nil)
+	}))
 
 	// --- Uniform buffers ---
 	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
 	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImageView, &uniforms)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyDescriptorPool(dev, descPool, nil)
+		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
+	}))
 	// --- RT Pipeline ---
 	pipelineLayout, pipeline := createRTPipeline(dev, descLayout)
+	cleanup.Add(ash.DestroyerFunc(func() {
+		vk.DestroyPipeline(dev, pipeline, nil)
+		vk.DestroyPipelineLayout(dev, pipelineLayout, nil)
+	}))
 	// --- Shader Binding Table ---
 	raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem := createSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment)
+	cleanup.Add(ash.DestroyerFunc(func() { vk.DestroyBuffer(dev, sbtBuf, nil); vk.FreeMemory(dev, sbtMem, nil) }))
 
 	// --- Sync objects ---
-	fence, semaphore, err := createSyncObjects(dev)
+	sync, err := ash.NewSyncObjects(dev)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&sync)
 
 	// Camera matrices
 	var projMatrix, viewMatrix ash.Mat4x4
@@ -187,7 +224,7 @@ func main() {
 
 	for !window.ShouldClose() {
 		glfw.PollEvents()
-		if !drawFrame(dev, queue, swapchain, cmdBuffers, fence, semaphore,
+		if !drawFrame(dev, queue, swapchain, cmdBuffers, sync.Fence, sync.Semaphore,
 			pipeline, pipelineLayout, descSets, &uniforms,
 			storageImage, &raygenSBT, &missSBT, &hitSBT,
 			&projMatrix, &viewMatrix) {
@@ -195,39 +232,6 @@ func main() {
 		}
 	}
 
-	// Cleanup
-	vk.DeviceWaitIdle(dev)
-	vk.DestroySemaphore(dev, semaphore, nil)
-	vk.DestroyFence(dev, fence, nil)
-	vk.DestroyPipeline(dev, pipeline, nil)
-	vk.DestroyPipelineLayout(dev, pipelineLayout, nil)
-	vk.DestroyDescriptorPool(dev, descPool, nil)
-	vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
-	uniforms.Destroy()
-	vk.DestroyBuffer(dev, sbtBuf, nil)
-	vk.FreeMemory(dev, sbtMem, nil)
-	vk.DestroyImageView(dev, storageImageView, nil)
-	vk.DestroyImage(dev, storageImage, nil)
-	vk.FreeMemory(dev, storageImageMem, nil)
-	vk.DestroyAccelerationStructure(dev, tlas, nil)
-	vk.DestroyBuffer(dev, tlasBuf, nil)
-	vk.FreeMemory(dev, tlasMem, nil)
-	vk.DestroyAccelerationStructure(dev, blas, nil)
-	vk.DestroyBuffer(dev, blasBuf, nil)
-	vk.FreeMemory(dev, blasMem, nil)
-	vk.DestroyBuffer(dev, indexBuf, nil)
-	vk.FreeMemory(dev, indexMem, nil)
-	vk.DestroyBuffer(dev, vertexBuf, nil)
-	vk.FreeMemory(dev, vertexMem, nil)
-	vk.FreeCommandBuffers(dev, cmdPool, swapchainLen, cmdBuffers)
-	vk.DestroyCommandPool(dev, cmdPool, nil)
-	swapchain.Destroy()
-	vk.DestroyDevice(dev, nil)
-	if device.GetDebugCallback() != vk.NullDebugReportCallback {
-		vk.DestroyDebugReportCallback(device.Instance, device.GetDebugCallback(), nil)
-	}
-	vk.DestroySurface(device.Instance, device.Surface, nil)
-	vk.DestroyInstance(device.Instance, nil)
 }
 
 // --- Helper functions ---
@@ -699,18 +703,6 @@ func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handl
 	missSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr + vk.DeviceAddress(handleSizeAligned), Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
 	hitSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr + vk.DeviceAddress(2*handleSizeAligned), Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
 	return raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem
-}
-
-func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
-	var fence vk.Fence
-	var sem vk.Semaphore
-	if err := vk.Error(vk.CreateFence(dev, &vk.FenceCreateInfo{SType: vk.StructureTypeFenceCreateInfo}, nil, &fence)); err != nil {
-		return fence, sem, err
-	}
-	if err := vk.Error(vk.CreateSemaphore(dev, &vk.SemaphoreCreateInfo{SType: vk.StructureTypeSemaphoreCreateInfo}, nil, &sem)); err != nil {
-		return fence, sem, err
-	}
-	return fence, sem, nil
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
