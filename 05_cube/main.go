@@ -68,6 +68,8 @@ func main() {
 	}
 	defer window.Destroy()
 
+	var cleanup asch.Destroyer
+
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 	device, err := asch.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
@@ -80,13 +82,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(device.Destroy)
 
 	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := asch.NewSwapchain(device.Device, device.GpuDevice, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
-
+	cleanup.Add(swapchain.Destroy)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	// Depth buffer via framework
@@ -94,6 +97,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(depth.Destroy)
 
 	// Renderer with depth (render pass + command pool)
 	renderer, err := asch.NewRendererWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
@@ -108,6 +112,7 @@ func main() {
 	if err := renderer.CreateCommandBuffers(swapchainLen); err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(renderer.Destroy)
 
 	// Texture via framework
 	img, err := png.Decode(bytes.NewReader(gopherPng))
@@ -122,6 +127,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(texture.Destroy)
 	asch.TransitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(),
 		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
@@ -130,24 +136,34 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(uniforms.Destroy)
 
 	// Descriptor set layout + pool + sets
 	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, uniforms.GetBuffers(), texture.GetView(), texture.GetSampler())
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(func() { vk.DestroyDescriptorSetLayout(device.Device, descLayout, nil) })
+	cleanup.Add(func() { vk.DestroyDescriptorPool(device.Device, descPool, nil) })
 
 	// Pipeline
 	pipelineLayout, pipelineObj, pipelineCache, err := createCubePipeline(device.Device, renderer.RenderPass, descLayout)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(func() {
+		vk.DestroyPipeline(device.Device, pipelineObj, nil)
+		vk.DestroyPipelineCache(device.Device, pipelineCache, nil)
+		vk.DestroyPipelineLayout(device.Device, pipelineLayout, nil)
+	})
 
 	// Sync objects
 	fence, semaphore, err := createSyncObjects(device.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(func() { vk.DestroyFence(device.Device, fence, nil) })
+	cleanup.Add(func() { vk.DestroySemaphore(device.Device, semaphore, nil) })
 
 	// Camera matrices
 	var projMatrix, viewMatrix, modelMatrix lin.Mat4x4
@@ -178,29 +194,7 @@ func main() {
 		}
 	}
 
-	vk.DeviceWaitIdle(device.Device)
-
-	// Cleanup
-	vk.DestroySemaphore(device.Device, semaphore, nil)
-	vk.DestroyFence(device.Device, fence, nil)
-	vk.DestroyPipeline(device.Device, pipelineObj, nil)
-	vk.DestroyPipelineCache(device.Device, pipelineCache, nil)
-	vk.DestroyPipelineLayout(device.Device, pipelineLayout, nil)
-	vk.DestroyDescriptorPool(device.Device, descPool, nil)
-	vk.DestroyDescriptorSetLayout(device.Device, descLayout, nil)
-	uniforms.Destroy()
-	texture.Destroy()
-	vk.FreeCommandBuffers(device.Device, renderer.GetCmdPool(), swapchainLen, renderer.GetCmdBuffers())
-	vk.DestroyCommandPool(device.Device, renderer.GetCmdPool(), nil)
-	vk.DestroyRenderPass(device.Device, renderer.RenderPass, nil)
-	depth.Destroy()
-	swapchain.Destroy()
-	vk.DestroyDevice(device.Device, nil)
-	if device.GetDebugCallback() != vk.NullDebugReportCallback {
-		vk.DestroyDebugReportCallback(device.Instance, device.GetDebugCallback(), nil)
-	}
-	vk.DestroySurface(device.Instance, device.Surface, nil)
-	vk.DestroyInstance(device.Instance, nil)
+	cleanup.Destroy()
 }
 
 

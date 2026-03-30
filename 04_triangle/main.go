@@ -49,6 +49,8 @@ func main() {
 	defer window.Destroy()
 
 	// Use vulkan-ash for device creation with GLFW surface
+	var cleanup asch.Destroyer
+
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 	device, err := asch.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
@@ -61,6 +63,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(device.Destroy)
 
 	// Use vulkan-ash for swapchain
 	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
@@ -68,6 +71,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(swapchain.Destroy)
 
 	// Use vulkan-ash for renderer (render pass + command pool)
 	renderer, err := asch.NewRenderer(device.Device, swapchain.DisplayFormat)
@@ -84,6 +88,7 @@ func main() {
 	if err := renderer.CreateCommandBuffers(swapchain.DefaultSwapchainLen()); err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(renderer.Destroy)
 
 	// Create vertex buffer with triangle data via framework
 	r := float32(0.5)
@@ -96,6 +101,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(buffer.Destroy)
 
 	// Create graphics pipeline with push constants via framework
 	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
@@ -110,12 +116,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(gfx.Destroy)
 
 	// Create sync objects
 	fence, semaphore, err := createSyncObjects(device.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(func() { vk.DestroyFence(device.Device, fence, nil) })
+	cleanup.Add(func() { vk.DestroySemaphore(device.Device, semaphore, nil) })
 
 	log.Println("Vulkan initialized, starting render loop")
 	startTime := time.Now()
@@ -132,24 +141,7 @@ func main() {
 		}
 	}
 
-	vk.DeviceWaitIdle(device.Device)
-
-	// Cleanup in reverse order
-	vk.DestroySemaphore(device.Device, semaphore, nil)
-	vk.DestroyFence(device.Device, fence, nil)
-	gfx.Destroy()
-	vk.FreeMemory(device.Device, buffer.GetDeviceMemory(), nil)
-	buffer.Destroy()
-	vk.FreeCommandBuffers(device.Device, renderer.GetCmdPool(), uint32(len(renderer.GetCmdBuffers())), renderer.GetCmdBuffers())
-	vk.DestroyCommandPool(device.Device, renderer.GetCmdPool(), nil)
-	vk.DestroyRenderPass(device.Device, renderer.RenderPass, nil)
-	swapchain.Destroy()
-	vk.DestroyDevice(device.Device, nil)
-	if device.GetDebugCallback() != vk.NullDebugReportCallback {
-		vk.DestroyDebugReportCallback(device.Instance, device.GetDebugCallback(), nil)
-	}
-	vk.DestroySurface(device.Instance, device.Surface, nil)
-	vk.DestroyInstance(device.Instance, nil)
+	cleanup.Destroy()
 }
 
 func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
