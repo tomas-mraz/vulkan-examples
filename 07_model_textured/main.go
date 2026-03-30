@@ -67,6 +67,8 @@ func main() {
 	log.Printf("Loaded model: %d vertices, %d indices, texture %dx%d", model.VertexCount(), model.IndexCount(), model.TextureWidth, model.TextureHeight)
 
 	// Vulkan init
+	var cleanup asch.Destroyer
+
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 	device, err := asch.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
@@ -79,18 +81,21 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(device.Destroy)
 
 	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := asch.NewSwapchain(device.Device, device.GpuDevice, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(swapchain.Destroy)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	depth, err := asch.NewDepthBuffer(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD32Sfloat)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(depth.Destroy)
 
 	renderer, err := asch.NewRendererWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
@@ -102,22 +107,26 @@ func main() {
 	if err := renderer.CreateCommandBuffers(swapchainLen); err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(renderer.Destroy)
 
 	// Buffers
 	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, model.Vertices)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(vertexBuf.Destroy)
 	indexBuf, err := asch.NewIndexBuffer32(device.Device, device.GpuDevice, model.Indices)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(indexBuf.Destroy)
 
 	// Texture
 	texture, err := asch.NewTexture(device.Device, device.GpuDevice, model.TextureWidth, model.TextureHeight, model.TextureRGBA)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(texture.Destroy)
 	asch.TransitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(),
 		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
@@ -126,12 +135,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(uniforms.Destroy)
 
 	// Descriptors (UBO + texture)
 	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, &uniforms, texture)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(func() { vk.DestroyDescriptorSetLayout(device.Device, descLayout, nil) })
+	cleanup.Add(func() { vk.DestroyDescriptorPool(device.Device, descPool, nil) })
 
 	// Pipeline
 	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
@@ -151,11 +163,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(gfx.Destroy)
 
 	fence, semaphore, err := createSyncObjects(device.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(func() { vk.DestroyFence(device.Device, fence, nil) })
+	cleanup.Add(func() { vk.DestroySemaphore(device.Device, semaphore, nil) })
 
 	// Camera
 	var projMatrix, viewMatrix lin.Mat4x4
@@ -184,30 +199,7 @@ func main() {
 		}
 	}
 
-	vk.DeviceWaitIdle(device.Device)
-
-	// Cleanup
-	vk.DestroySemaphore(device.Device, semaphore, nil)
-	vk.DestroyFence(device.Device, fence, nil)
-	gfx.Destroy()
-	vk.DestroyDescriptorPool(device.Device, descPool, nil)
-	vk.DestroyDescriptorSetLayout(device.Device, descLayout, nil)
-	uniforms.Destroy()
-	texture.Destroy()
-	indexBuf.Destroy()
-	vk.FreeMemory(device.Device, vertexBuf.GetDeviceMemory(), nil)
-	vertexBuf.Destroy()
-	vk.FreeCommandBuffers(device.Device, renderer.GetCmdPool(), swapchainLen, renderer.GetCmdBuffers())
-	vk.DestroyCommandPool(device.Device, renderer.GetCmdPool(), nil)
-	vk.DestroyRenderPass(device.Device, renderer.RenderPass, nil)
-	depth.Destroy()
-	swapchain.Destroy()
-	vk.DestroyDevice(device.Device, nil)
-	if device.GetDebugCallback() != vk.NullDebugReportCallback {
-		vk.DestroyDebugReportCallback(device.Instance, device.GetDebugCallback(), nil)
-	}
-	vk.DestroySurface(device.Instance, device.Surface, nil)
-	vk.DestroyInstance(device.Instance, nil)
+	cleanup.Destroy()
 }
 
 // --- Vulkan helpers ---
