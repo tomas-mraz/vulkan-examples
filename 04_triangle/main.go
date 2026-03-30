@@ -49,7 +49,8 @@ func main() {
 	defer window.Destroy()
 
 	// Use vulkan-ash for device creation with GLFW surface
-	var cleanup asch.Destroyer
+	var cleanup asch.Cleanup
+	defer cleanup.Destroy()
 
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -63,7 +64,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(device.Destroy)
+	cleanup.Add(&device)
 
 	// Use vulkan-ash for swapchain
 	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
@@ -71,7 +72,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(swapchain.Destroy)
+	cleanup.Add(&swapchain)
 
 	// Use vulkan-ash for renderer (render pass + command pool)
 	renderer, err := asch.NewRenderer(device.Device, swapchain.DisplayFormat)
@@ -88,7 +89,7 @@ func main() {
 	if err := renderer.CreateCommandBuffers(swapchain.DefaultSwapchainLen()); err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(renderer.Destroy)
+	cleanup.Add(&renderer)
 
 	// Create vertex buffer with triangle data via framework
 	r := float32(0.5)
@@ -101,7 +102,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(buffer.Destroy)
+	cleanup.Add(&buffer)
 
 	// Create graphics pipeline with push constants via framework
 	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
@@ -116,15 +117,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(gfx.Destroy)
+	cleanup.Add(&gfx)
 
 	// Create sync objects
-	fence, semaphore, err := createSyncObjects(device.Device)
+	sync, err := asch.NewSyncObjects(device.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(func() { vk.DestroyFence(device.Device, fence, nil) })
-	cleanup.Add(func() { vk.DestroySemaphore(device.Device, semaphore, nil) })
+	cleanup.Add(&sync)
 
 	log.Println("Vulkan initialized, starting render loop")
 	startTime := time.Now()
@@ -136,24 +136,10 @@ func main() {
 		angle := float32(time.Since(startTime).Seconds())
 
 		if !drawFrame(device.Device, device.Queue, swapchain, renderer, buffer,
-			fence, semaphore, gfx, angle) {
+			sync.Fence, sync.Semaphore, gfx, angle) {
 			break
 		}
 	}
-
-	cleanup.Destroy()
-}
-
-func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
-	var fence vk.Fence
-	var sem vk.Semaphore
-	if err := vk.Error(vk.CreateFence(dev, &vk.FenceCreateInfo{SType: vk.StructureTypeFenceCreateInfo}, nil, &fence)); err != nil {
-		return fence, sem, err
-	}
-	if err := vk.Error(vk.CreateSemaphore(dev, &vk.SemaphoreCreateInfo{SType: vk.StructureTypeSemaphoreCreateInfo}, nil, &sem)); err != nil {
-		return fence, sem, err
-	}
-	return fence, sem, nil
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,

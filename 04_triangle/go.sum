@@ -8,3 +8,5 @@ github.com/tomas-mraz/vulkan v0.0.0-20260323112817-4f29e510696c h1:NR9rifAgbzWXG
 github.com/tomas-mraz/vulkan v0.0.0-20260323112817-4f29e510696c/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
 github.com/tomas-mraz/vulkan-ash v0.0.0-20260330041320-56293cd953d7 h1:flx3U+svf4bv7hdo5rPjPoxArGQ0h4Xw8CG0ucMF85I=
 github.com/tomas-mraz/vulkan-ash v0.0.0-20260330041320-56293cd953d7/go.mod h1:7MiOyJmzarWCEBAlqgYx16awCfPv9pZ4ZlXn7gpN6p4=
+github.com/tomas-mraz/vulkan-ash v0.0.0-20260330080641-8e4ec41c2edb h1:0sZ9NfHQ8F5H3xExQ2iEoeNgVAkmZxkLOZc9udxNOTI=
+github.com/tomas-mraz/vulkan-ash v0.0.0-20260330080641-8e4ec41c2edb/go.mod h1:7MiOyJmzarWCEBAlqgYx16awCfPv9pZ4ZlXn7gpN6p4=

@@ -69,6 +69,7 @@ func main() {
 
 	// Vulkan init
 	var cleanup asch.Cleanup
+	defer cleanup.Destroy()
 
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -187,8 +188,6 @@ func main() {
 			break
 		}
 	}
-
-	cleanup.Destroy()
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,

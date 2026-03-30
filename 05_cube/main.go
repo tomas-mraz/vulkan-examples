@@ -69,6 +69,7 @@ func main() {
 	defer window.Destroy()
 
 	var cleanup asch.Cleanup
+	defer cleanup.Destroy()
 
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -194,11 +195,7 @@ func main() {
 			break
 		}
 	}
-
-	cleanup.Destroy()
 }
-
-
 
 func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj, view, model *lin.Mat4x4) {
 	var VP, MVP lin.Mat4x4
@@ -253,7 +250,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	vk.ResetFences(dev, 1, []vk.Fence{fence})
 	if err := vk.Error(vk.QueueSubmit(queue, 1, []vk.SubmitInfo{{
 		SType: vk.StructureTypeSubmitInfo, WaitSemaphoreCount: 1, PWaitSemaphores: []vk.Semaphore{semaphore},
-		PWaitDstStageMask: []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)},
+		PWaitDstStageMask:  []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)},
 		CommandBufferCount: 1, PCommandBuffers: r.GetCmdBuffers()[nextIdx:],
 	}}, fence)); err != nil {
 		log.Println("QueueSubmit:", err)
@@ -269,7 +266,6 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	})
 	return ret == vk.Success || ret == vk.Suboptimal
 }
-
 
 // Cube vertex data (36 vertices = 12 triangles = 6 faces)
 var gVertexBufferData = []float32{
