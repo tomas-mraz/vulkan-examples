@@ -53,46 +53,6 @@ func (u *uniformData) Bytes() []byte {
 	return unsafe.Slice((*byte)(unsafe.Pointer(u)), uniformSize)
 }
 
-// primitiveData holds per-primitive geometry resources.
-type primitiveData struct {
-	vertexBuf     ash.VulkanBufferResource
-	indexBuf      ash.VulkanBufferResource
-	vertexCount   uint32
-	triangleCount uint32
-	transform     [12]float32
-	baseColorTex  int32
-	occlusionTex  int32
-}
-
-// modelData owns primitive buffers plus a single multi-geometry BLAS for the model.
-type modelData struct {
-	device      vk.Device
-	primitives  []primitiveData
-	geometryBuf ash.VulkanBufferResource
-	blasBuf     ash.VulkanBufferResource
-	blas        vk.AccelerationStructure
-	textures    []ash.VulkanImageResource
-}
-
-func (m *modelData) Destroy() {
-	if m == nil {
-		return
-	}
-	for i := range m.primitives {
-		m.primitives[i].indexBuf.Destroy()
-		m.primitives[i].vertexBuf.Destroy()
-	}
-	for i := range m.textures {
-		m.textures[i].Destroy()
-	}
-	m.geometryBuf.Destroy()
-	if m.blas != vk.NullAccelerationStructure {
-		vk.DestroyAccelerationStructure(m.device, m.blas, nil)
-		m.blas = vk.NullAccelerationStructure
-	}
-	m.blasBuf.Destroy()
-}
-
 type geometryNode struct {
 	VertexBufferDeviceAddress uint64
 	IndexBufferDeviceAddress  uint64
@@ -222,11 +182,11 @@ func main() {
 
 	// --- Load glTF model ---
 	model := loadGLTFModel(dev, gpu, queue, &cmdCtx, "assets/FlightHelmet/FlightHelmet.gltf")
-	log.Printf("Loaded %d primitives into one BLAS", len(model.primitives))
+	log.Printf("Loaded %d primitives into one BLAS", len(model.Primitives))
 	cleanup.Add(&model)
 
 	// --- Build TLAS with one instance for the model BLAS ---
-	tlasBuf, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.blas)
+	tlasBuf, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.BLAS)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyAccelerationStructure(dev, tlas, nil)
 		tlasBuf.Destroy()
@@ -247,7 +207,7 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), model.geometryBuf.Buffer, model.textures, &uniforms)
+	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), model.GeometryBuffer.Buffer, model.Textures, &uniforms)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyDescriptorPool(dev, descPool, nil)
 		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
@@ -301,7 +261,7 @@ func main() {
 
 // --- glTF loading ---
 
-func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, path string) modelData {
+func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, path string) ash.GLTFModel {
 	doc, err := gltf.Open(path)
 	if err != nil {
 		log.Fatal("gltf.Open:", err)
@@ -310,7 +270,7 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 		log.Fatal("gltf model has no scenes")
 	}
 
-	var prims []primitiveData
+	var prims []ash.GLTFPrimitive
 	activeScene := 0
 	if doc.Scene != nil {
 		activeScene = *doc.Scene
@@ -388,14 +348,14 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 					}
 				}
 
-				prims = append(prims, primitiveData{
-					vertexBuf:     vertexBuf,
-					indexBuf:      indexBuf,
-					vertexCount:   uint32(len(positions)),
-					triangleCount: uint32(len(indices) / 3),
-					transform:     vkTransformMatrix(worldTransform),
-					baseColorTex:  baseColorTex,
-					occlusionTex:  occlusionTex,
+				prims = append(prims, ash.GLTFPrimitive{
+					VertexBuffer:  vertexBuf,
+					IndexBuffer:   indexBuf,
+					VertexCount:   uint32(len(positions)),
+					TriangleCount: uint32(len(indices) / 3),
+					Transform:     vkTransformMatrix(worldTransform),
+					BaseColorTex:  baseColorTex,
+					OcclusionTex:  occlusionTex,
 				})
 			}
 		}
@@ -414,14 +374,7 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 
 	blasBuf, blas := buildBLAS(dev, gpu, queue, cmdCtx, prims)
 	geometryBuf := createGeometryNodesBuffer(dev, gpu, prims)
-	return modelData{
-		device:      dev,
-		primitives:  prims,
-		geometryBuf: geometryBuf,
-		blasBuf:     blasBuf,
-		blas:        blas,
-		textures:    textures,
-	}
+	return ash.NewGLTFModel(dev, prims, geometryBuf, blasBuf, blas, textures)
 }
 
 func identityMat4() [16]float32 {
@@ -539,14 +492,14 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 	m[3][3] = 0
 }
 
-func createGeometryNodesBuffer(dev vk.Device, gpu vk.PhysicalDevice, prims []primitiveData) ash.VulkanBufferResource {
+func createGeometryNodesBuffer(dev vk.Device, gpu vk.PhysicalDevice, prims []ash.GLTFPrimitive) ash.VulkanBufferResource {
 	nodes := make([]geometryNode, len(prims))
 	for i := range prims {
 		nodes[i] = geometryNode{
-			VertexBufferDeviceAddress: uint64(prims[i].vertexBuf.DeviceAddress),
-			IndexBufferDeviceAddress:  uint64(prims[i].indexBuf.DeviceAddress),
-			TextureIndexBaseColor:     prims[i].baseColorTex,
-			TextureIndexOcclusion:     prims[i].occlusionTex,
+			VertexBufferDeviceAddress: uint64(prims[i].VertexBuffer.DeviceAddress),
+			IndexBufferDeviceAddress:  uint64(prims[i].IndexBuffer.DeviceAddress),
+			TextureIndexBaseColor:     prims[i].BaseColorTex,
+			TextureIndexOcclusion:     prims[i].OcclusionTex,
 		}
 	}
 	buf, err := ash.NewBufferHostVisible(dev, gpu, nodes, true, vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit))
@@ -583,14 +536,14 @@ func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.A
 }
 
 // buildBLAS creates one BLAS containing one geometry per glTF primitive.
-func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, prims []primitiveData) (ash.VulkanBufferResource, vk.AccelerationStructure) {
+func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, prims []ash.GLTFPrimitive) (ash.VulkanBufferResource, vk.AccelerationStructure) {
 	geometries := make([]vk.AccelerationStructureGeometry, 0, len(prims))
 	primitiveCounts := make([]uint32, 0, len(prims))
 	rangeInfos := make([]vk.AccelerationStructureBuildRangeInfo, 0, len(prims))
 	transformMatrices := make([][12]float32, len(prims))
 
 	for i := range prims {
-		transformMatrices[i] = prims[i].transform
+		transformMatrices[i] = prims[i].Transform
 	}
 	transformBuf, err := ash.NewBufferHostVisible(dev, gpu,
 		transformMatrices, true, vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit))
@@ -601,15 +554,15 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	transformStride := vk.DeviceAddress(unsafe.Sizeof(transformMatrices[0]))
 
 	for i := range prims {
-		vertexAddr := prims[i].vertexBuf.DeviceAddress
-		indexAddr := prims[i].indexBuf.DeviceAddress
+		vertexAddr := prims[i].VertexBuffer.DeviceAddress
+		indexAddr := prims[i].IndexBuffer.DeviceAddress
 
 		var trianglesData vk.AccelerationStructureGeometryTrianglesData
 		trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
 		trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
 		setDeviceAddressConst(&trianglesData.VertexData, vertexAddr)
 		trianglesData.VertexStride = 32 // pos3 + normal3 + uv2 = 8 floats * 4 bytes
-		trianglesData.MaxVertex = prims[i].vertexCount - 1
+		trianglesData.MaxVertex = prims[i].VertexCount - 1
 		trianglesData.IndexType = vk.IndexTypeUint32
 		setDeviceAddressConst(&trianglesData.IndexData, indexAddr)
 		setDeviceAddressConst(&trianglesData.TransformData, transformAddr+vk.DeviceAddress(i)*transformStride)
@@ -621,9 +574,9 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 		setGeometryTriangles(&geometry.Geometry, &trianglesData)
 
 		geometries = append(geometries, geometry)
-		primitiveCounts = append(primitiveCounts, prims[i].triangleCount)
+		primitiveCounts = append(primitiveCounts, prims[i].TriangleCount)
 		rangeInfos = append(rangeInfos, vk.AccelerationStructureBuildRangeInfo{
-			PrimitiveCount: prims[i].triangleCount,
+			PrimitiveCount: prims[i].TriangleCount,
 		})
 	}
 
