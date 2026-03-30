@@ -45,6 +45,9 @@ func main() {
 	}
 	defer window.Destroy()
 
+	var cleanup asch.Cleanup
+	defer cleanup.Destroy()
+
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 	device, err := asch.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
@@ -57,12 +60,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&device)
 
 	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := asch.NewSwapchain(device.Device, device.GpuDevice, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&swapchain)
 
 	renderer, err := asch.NewRenderer(device.Device, swapchain.DisplayFormat)
 	if err != nil {
@@ -74,11 +79,13 @@ func main() {
 	if err := renderer.CreateCommandBuffers(swapchain.DefaultSwapchainLen()); err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&renderer)
 
 	buffer, err := asch.NewBuffer(device.Device, device.GpuDevice)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&buffer)
 
 	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
 		VertShaderData: vertShaderCode,
@@ -87,6 +94,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&gfx)
 
 	// Record command buffers (static, no per-frame updates needed)
 	asch.VulkanStart(device.Device, &swapchain, &renderer, &buffer, &gfx)
@@ -99,7 +107,4 @@ func main() {
 			asch.DrawFrame(device.Device, device.Queue, swapchain, renderer)
 		}
 	}
-
-	vk.DeviceWaitIdle(device.Device)
-	asch.DestroyInOrder(&device, &swapchain, &renderer, &buffer, &gfx)
 }
