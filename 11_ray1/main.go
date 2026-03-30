@@ -115,30 +115,11 @@ func main() {
 	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
-	// Create command pool
-	var cmdPool vk.CommandPool
-	if err := vk.Error(vk.CreateCommandPool(dev, &vk.CommandPoolCreateInfo{
-		SType:            vk.StructureTypeCommandPoolCreateInfo,
-		Flags:            vk.CommandPoolCreateFlags(vk.CommandPoolCreateResetCommandBufferBit),
-		QueueFamilyIndex: 0,
-	}, nil, &cmdPool)); err != nil {
-		log.Fatal("CreateCommandPool:", err)
+	cmdCtx, err := ash.NewCommandContext(dev, 0, swapchainLen)
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	// Create command buffers
-	cmdBuffers := make([]vk.CommandBuffer, swapchainLen)
-	if err := vk.Error(vk.AllocateCommandBuffers(dev, &vk.CommandBufferAllocateInfo{
-		SType:              vk.StructureTypeCommandBufferAllocateInfo,
-		CommandPool:        cmdPool,
-		Level:              vk.CommandBufferLevelPrimary,
-		CommandBufferCount: swapchainLen,
-	}, cmdBuffers)); err != nil {
-		log.Fatal("AllocateCommandBuffers:", err)
-	}
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.FreeCommandBuffers(dev, cmdPool, swapchainLen, cmdBuffers)
-		vk.DestroyCommandPool(dev, cmdPool, nil)
-	}))
+	cleanup.Add(&cmdCtx)
 
 	// --- Create scene geometry (triangle) ---
 	// Triangle vertices: position (xyz)
@@ -163,21 +144,21 @@ func main() {
 	indexAddr := getBufferAddress(dev, indexBuf)
 
 	// --- Build BLAS ---
-	blasBuf, blasMem, blas := buildBLAS(dev, gpu, queue, cmdPool, vertexAddr, indexAddr, 3, 1)
+	blasBuf, blasMem, blas := buildBLAS(dev, gpu, queue, &cmdCtx, vertexAddr, indexAddr, 3, 1)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyAccelerationStructure(dev, blas, nil)
 		vk.DestroyBuffer(dev, blasBuf, nil)
 		vk.FreeMemory(dev, blasMem, nil)
 	}))
 	// --- Build TLAS ---
-	tlasBuf, tlasMem, tlas := buildTLAS(dev, gpu, queue, cmdPool, blas)
+	tlasBuf, tlasMem, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, blas)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyAccelerationStructure(dev, tlas, nil)
 		vk.DestroyBuffer(dev, tlasBuf, nil)
 		vk.FreeMemory(dev, tlasMem, nil)
 	}))
 	// --- Create storage image ---
-	storageImage, storageImageMem, storageImageView := createStorageImage(dev, gpu, queue, cmdPool, windowWidth, windowHeight, swapchain.DisplayFormat)
+	storageImage, storageImageMem, storageImageView := createStorageImage(dev, gpu, queue, &cmdCtx, windowWidth, windowHeight, swapchain.DisplayFormat)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyImageView(dev, storageImageView, nil)
 		vk.DestroyImage(dev, storageImage, nil)
@@ -224,7 +205,7 @@ func main() {
 
 	for !window.ShouldClose() {
 		glfw.PollEvents()
-		if !drawFrame(dev, queue, swapchain, cmdBuffers, sync.Fence, sync.Semaphore,
+		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
 			pipeline, pipelineLayout, descSets, &uniforms,
 			storageImage, &raygenSBT, &missSBT, &hitSBT,
 			&projMatrix, &viewMatrix) {
@@ -321,34 +302,6 @@ func getBufferAddress(dev vk.Device, buf vk.Buffer) vk.DeviceAddress {
 	})
 }
 
-func beginOneTimeCmd(dev vk.Device, cmdPool vk.CommandPool) vk.CommandBuffer {
-	cmds := make([]vk.CommandBuffer, 1)
-	vk.AllocateCommandBuffers(dev, &vk.CommandBufferAllocateInfo{
-		SType:              vk.StructureTypeCommandBufferAllocateInfo,
-		CommandPool:        cmdPool,
-		Level:              vk.CommandBufferLevelPrimary,
-		CommandBufferCount: 1,
-	}, cmds)
-	vk.BeginCommandBuffer(cmds[0], &vk.CommandBufferBeginInfo{
-		SType: vk.StructureTypeCommandBufferBeginInfo,
-		Flags: vk.CommandBufferUsageFlags(vk.CommandBufferUsageOneTimeSubmitBit),
-	})
-	return cmds[0]
-}
-
-func endOneTimeCmd(dev vk.Device, queue vk.Queue, cmdPool vk.CommandPool, cmd vk.CommandBuffer) {
-	vk.EndCommandBuffer(cmd)
-	var fence vk.Fence
-	vk.CreateFence(dev, &vk.FenceCreateInfo{SType: vk.StructureTypeFenceCreateInfo}, nil, &fence)
-	vk.QueueSubmit(queue, 1, []vk.SubmitInfo{{
-		SType: vk.StructureTypeSubmitInfo, CommandBufferCount: 1,
-		PCommandBuffers: []vk.CommandBuffer{cmd},
-	}}, fence)
-	vk.WaitForFences(dev, 1, []vk.Fence{fence}, vk.True, 10_000_000_000)
-	vk.DestroyFence(dev, fence, nil)
-	vk.FreeCommandBuffers(dev, cmdPool, 1, []vk.CommandBuffer{cmd})
-}
-
 // setDeviceAddressConst writes a DeviceAddress into a DeviceOrHostAddressConst byte array
 func setDeviceAddressConst(addr *vk.DeviceOrHostAddressConst, da vk.DeviceAddress) {
 	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
@@ -373,7 +326,7 @@ func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.A
 	copy((*data)[:], src)
 }
 
-func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.CommandPool, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) (vk.Buffer, vk.DeviceMemory, vk.AccelerationStructure) {
+func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) (vk.Buffer, vk.DeviceMemory, vk.AccelerationStructure) {
 	var trianglesData vk.AccelerationStructureGeometryTrianglesData
 	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
 	trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
@@ -436,16 +389,21 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 
 	rangeInfos := []vk.AccelerationStructureBuildRangeInfo{{PrimitiveCount: triangleCount}}
 
-	cmd := beginOneTimeCmd(dev, cmdPool)
+	cmd, err := cmdCtx.BeginOneTime()
+	if err != nil {
+		log.Fatal("BeginOneTime:", err)
+	}
 	vk.CmdBuildAccelerationStructures(cmd, 1, &buildInfo2, [][]vk.AccelerationStructureBuildRangeInfo{rangeInfos})
-	endOneTimeCmd(dev, queue, cmdPool, cmd)
+	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
+		log.Fatal("EndOneTime:", err)
+	}
 
 	vk.DestroyBuffer(dev, scratchBuf, nil)
 	vk.FreeMemory(dev, scratchMem, nil)
 	return asBuf, asMem, as
 }
 
-func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.CommandPool, blas vk.AccelerationStructure) (vk.Buffer, vk.DeviceMemory, vk.AccelerationStructure) {
+func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas vk.AccelerationStructure) (vk.Buffer, vk.DeviceMemory, vk.AccelerationStructure) {
 	// VkAccelerationStructureInstanceKHR is 64 bytes
 	// Layout: transformMatrix (48 bytes), instanceCustomIndex+mask (4 bytes),
 	//         instanceShaderBindingTableRecordOffset+flags (4 bytes), accelerationStructureReference (8 bytes)
@@ -531,9 +489,14 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 
 	rangeInfos := []vk.AccelerationStructureBuildRangeInfo{{PrimitiveCount: 1}}
 
-	cmd := beginOneTimeCmd(dev, cmdPool)
+	cmd, err := cmdCtx.BeginOneTime()
+	if err != nil {
+		log.Fatal("BeginOneTime:", err)
+	}
 	vk.CmdBuildAccelerationStructures(cmd, 1, &buildInfo2, [][]vk.AccelerationStructureBuildRangeInfo{rangeInfos})
-	endOneTimeCmd(dev, queue, cmdPool, cmd)
+	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
+		log.Fatal("EndOneTime:", err)
+	}
 
 	vk.DestroyBuffer(dev, scratchBuf, nil)
 	vk.FreeMemory(dev, scratchMem, nil)
@@ -542,7 +505,7 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.
 	return asBuf, asMem, as
 }
 
-func createStorageImage(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdPool vk.CommandPool, width, height uint32, format vk.Format) (vk.Image, vk.DeviceMemory, vk.ImageView) {
+func createStorageImage(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, width, height uint32, format vk.Format) (vk.Image, vk.DeviceMemory, vk.ImageView) {
 	var img vk.Image
 	vk.CreateImage(dev, &vk.ImageCreateInfo{
 		SType: vk.StructureTypeImageCreateInfo, ImageType: vk.ImageType2d, Format: format,
@@ -572,7 +535,10 @@ func createStorageImage(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cm
 	}, nil, &view)
 
 	// Transition to general layout
-	cmd := beginOneTimeCmd(dev, cmdPool)
+	cmd, err := cmdCtx.BeginOneTime()
+	if err != nil {
+		log.Fatal("BeginOneTime:", err)
+	}
 	vk.CmdPipelineBarrier(cmd,
 		vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit), vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit),
 		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
@@ -581,7 +547,9 @@ func createStorageImage(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cm
 			DstAccessMask:       vk.AccessFlags(vk.AccessShaderWriteBit),
 			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
 		}})
-	endOneTimeCmd(dev, queue, cmdPool, cmd)
+	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
+		log.Fatal("EndOneTime:", err)
+	}
 	return img, mem, view
 }
 
@@ -705,7 +673,7 @@ func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handl
 	return raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdBuffers []vk.CommandBuffer,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.VulkanCommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	pipeline vk.Pipeline, pipelineLayout vk.PipelineLayout,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
@@ -714,6 +682,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdBuff
 	proj, view *ash.Mat4x4,
 ) bool {
 	var nextIdx uint32
+	cmdBuffers := cmdCtx.GetCmdBuffers()
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
 	if ret != vk.Success && ret != vk.Suboptimal {
 		return false
