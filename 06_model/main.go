@@ -93,7 +93,7 @@ func main() {
 	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
-	depth, err := asch.NewDepthBuffer(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD32Sfloat)
+	depth, err := asch.NewImageDepth(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD32Sfloat)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -94,7 +94,7 @@ func main() {
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	// Depth buffer via framework
-	depth, err := asch.NewDepthBuffer(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD16Unorm)
+	depth, err := asch.NewImageDepth(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD16Unorm)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -123,8 +123,7 @@ func main() {
 	rgba := image.NewRGBA(img.Bounds())
 	draw.Draw(rgba, rgba.Bounds(), img, image.Point{}, draw.Src)
 
-	texture, err := asch.NewTexture(device.Device, device.GpuDevice,
-		uint32(rgba.Bounds().Dx()), uint32(rgba.Bounds().Dy()), rgba.Pix)
+	texture, err := asch.NewImageTexture(device.Device, device.GpuDevice, uint32(rgba.Bounds().Dx()), uint32(rgba.Bounds().Dy()), rgba.Pix)
 	if err != nil {
 		log.Fatal(err)
 	}

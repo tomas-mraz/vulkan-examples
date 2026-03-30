@@ -244,7 +244,7 @@ func main() {
 	}))
 
 	// --- Create storage image ---
-	storageImg, err := ash.NewStorageImage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
+	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal(err)
 	}

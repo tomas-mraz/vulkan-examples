@@ -159,12 +159,11 @@ func main() {
 		tlasBuf.Destroy()
 	}))
 	// --- Create storage image ---
-	storageImage, storageImageMem, storageImageView := createStorageImage(dev, gpu, queue, &cmdCtx, windowWidth, windowHeight, swapchain.DisplayFormat)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyImageView(dev, storageImageView, nil)
-		vk.DestroyImage(dev, storageImage, nil)
-		vk.FreeMemory(dev, storageImageMem, nil)
-	}))
+	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
+	if err != nil {
+		log.Fatal("NewImageStorage:", err)
+	}
+	cleanup.Add(&storageImg)
 
 	// --- Uniform buffers ---
 	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
@@ -174,7 +173,7 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImageView, &uniforms)
+	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), &uniforms)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyDescriptorPool(dev, descPool, nil)
 		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
@@ -208,7 +207,7 @@ func main() {
 		glfw.PollEvents()
 		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
 			pipeline, pipelineLayout, descSets, &uniforms,
-			storageImage, &raygenSBT, &missSBT, &hitSBT,
+			storageImg.GetImage(), &raygenSBT, &missSBT, &hitSBT,
 			&projMatrix, &viewMatrix) {
 			break
 		}
@@ -426,55 +425,6 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	scratchBuf.Destroy()
 	instanceBuf.Destroy()
 	return asBuf, as
-}
-
-func createStorageImage(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, width, height uint32, format vk.Format) (vk.Image, vk.DeviceMemory, vk.ImageView) {
-	var img vk.Image
-	vk.CreateImage(dev, &vk.ImageCreateInfo{
-		SType: vk.StructureTypeImageCreateInfo, ImageType: vk.ImageType2d, Format: format,
-		Extent:    vk.Extent3D{Width: width, Height: height, Depth: 1},
-		MipLevels: 1, ArrayLayers: 1, Samples: vk.SampleCount1Bit,
-		Tiling: vk.ImageTilingOptimal,
-		Usage:  vk.ImageUsageFlags(vk.ImageUsageTransferSrcBit | vk.ImageUsageStorageBit),
-	}, nil, &img)
-
-	var memReqs vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(dev, img, &memReqs)
-	memReqs.Deref()
-	memIdx, _ := vk.FindMemoryTypeIndex(gpu, memReqs.MemoryTypeBits, vk.MemoryPropertyDeviceLocalBit)
-	var mem vk.DeviceMemory
-	vk.AllocateMemory(dev, &vk.MemoryAllocateInfo{
-		SType: vk.StructureTypeMemoryAllocateInfo, AllocationSize: memReqs.Size,
-		MemoryTypeIndex: memIdx,
-	}, nil, &mem)
-	vk.BindImageMemory(dev, img, mem, 0)
-
-	var view vk.ImageView
-	vk.CreateImageView(dev, &vk.ImageViewCreateInfo{
-		SType: vk.StructureTypeImageViewCreateInfo, Image: img,
-		ViewType: vk.ImageViewType2d, Format: format,
-		SubresourceRange: vk.ImageSubresourceRange{
-			AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1,
-		},
-	}, nil, &view)
-
-	// Transition to general layout
-	cmd, err := cmdCtx.BeginOneTime()
-	if err != nil {
-		log.Fatal("BeginOneTime:", err)
-	}
-	vk.CmdPipelineBarrier(cmd,
-		vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit), vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType: vk.StructureTypeImageMemoryBarrier, OldLayout: vk.ImageLayoutUndefined, NewLayout: vk.ImageLayoutGeneral,
-			Image: img, SubresourceRange: vk.ImageSubresourceRange{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1},
-			DstAccessMask:       vk.AccessFlags(vk.AccessShaderWriteBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
-	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
-		log.Fatal("EndOneTime:", err)
-	}
-	return img, mem, view
 }
 
 func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {

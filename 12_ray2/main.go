@@ -69,12 +69,6 @@ type primitiveData struct {
 	occlusionTex  int32
 }
 
-type textureData struct {
-	image   vk.Image
-	memory  vk.DeviceMemory
-	view    vk.ImageView
-	sampler vk.Sampler
-}
 
 // modelData owns primitive buffers plus a single multi-geometry BLAS for the model.
 type modelData struct {
@@ -82,7 +76,7 @@ type modelData struct {
 	geometryBuf ash.VulkanBufferResource
 	blasBuf     ash.VulkanBufferResource
 	blas        vk.AccelerationStructure
-	textures    []textureData
+	textures    []ash.VulkanImageResource
 }
 
 type geometryNode struct {
@@ -200,7 +194,7 @@ func main() {
 	}))
 	cleanup.Add(ash.DestroyerFunc(func() {
 		for i := range model.textures {
-			destroyTexture(dev, model.textures[i])
+			model.textures[i].Destroy()
 		}
 	}))
 	cleanup.Add(ash.DestroyerFunc(func() {
@@ -219,12 +213,11 @@ func main() {
 	}))
 
 	// --- Create storage image ---
-	storageImage, storageImageMem, storageImageView := createStorageImage(dev, gpu, queue, &cmdCtx, windowWidth, windowHeight, swapchain.DisplayFormat)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyImageView(dev, storageImageView, nil)
-		vk.DestroyImage(dev, storageImage, nil)
-		vk.FreeMemory(dev, storageImageMem, nil)
-	}))
+	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
+	if err != nil {
+		log.Fatal("NewImageStorage:", err)
+	}
+	cleanup.Add(&storageImg)
 
 	// --- Uniform buffers ---
 	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
@@ -234,7 +227,7 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImageView, model.geometryBuf.Buffer, model.textures, &uniforms)
+	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), model.geometryBuf.Buffer, model.textures, &uniforms)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyDescriptorPool(dev, descPool, nil)
 		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
@@ -275,7 +268,7 @@ func main() {
 
 		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
 			pipeline, pipelineLayout, descSets, &uniforms,
-			storageImage, &raygenSBT, &missSBT, &hitSBT,
+			storageImg.GetImage(), &raygenSBT, &missSBT, &hitSBT,
 			&projMatrix, &rotatedView) {
 			break
 		}
@@ -744,63 +737,7 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	return asBuf, as
 }
 
-func createStorageImage(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, width, height uint32, format vk.Format) (vk.Image, vk.DeviceMemory, vk.ImageView) {
-	var img vk.Image
-	vk.CreateImage(dev, &vk.ImageCreateInfo{
-		SType: vk.StructureTypeImageCreateInfo, ImageType: vk.ImageType2d, Format: format,
-		Extent:    vk.Extent3D{Width: width, Height: height, Depth: 1},
-		MipLevels: 1, ArrayLayers: 1, Samples: vk.SampleCount1Bit,
-		Tiling: vk.ImageTilingOptimal,
-		Usage:  vk.ImageUsageFlags(vk.ImageUsageTransferSrcBit | vk.ImageUsageStorageBit),
-	}, nil, &img)
-
-	var memReqs vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(dev, img, &memReqs)
-	memReqs.Deref()
-	memIdx, _ := vk.FindMemoryTypeIndex(gpu, memReqs.MemoryTypeBits, vk.MemoryPropertyDeviceLocalBit)
-	var mem vk.DeviceMemory
-	vk.AllocateMemory(dev, &vk.MemoryAllocateInfo{
-		SType: vk.StructureTypeMemoryAllocateInfo, AllocationSize: memReqs.Size,
-		MemoryTypeIndex: memIdx,
-	}, nil, &mem)
-	vk.BindImageMemory(dev, img, mem, 0)
-
-	var view vk.ImageView
-	vk.CreateImageView(dev, &vk.ImageViewCreateInfo{
-		SType: vk.StructureTypeImageViewCreateInfo, Image: img,
-		ViewType: vk.ImageViewType2d, Format: format,
-		SubresourceRange: vk.ImageSubresourceRange{
-			AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1,
-		},
-	}, nil, &view)
-
-	// Transition to general layout
-	cmd, err := cmdCtx.BeginOneTime()
-	if err != nil {
-		log.Fatal("BeginOneTime:", err)
-	}
-	vk.CmdPipelineBarrier(cmd,
-		vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit), vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType: vk.StructureTypeImageMemoryBarrier, OldLayout: vk.ImageLayoutUndefined, NewLayout: vk.ImageLayoutGeneral,
-			Image: img, SubresourceRange: vk.ImageSubresourceRange{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1},
-			DstAccessMask:       vk.AccessFlags(vk.AccessShaderWriteBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
-	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
-		log.Fatal("EndOneTime:", err)
-	}
-	return img, mem, view
-}
-
-func destroyTexture(dev vk.Device, texture textureData) {
-	vk.DestroySampler(dev, texture.sampler, nil)
-	vk.DestroyImageView(dev, texture.view, nil)
-	vk.DestroyImage(dev, texture.image, nil)
-	vk.FreeMemory(dev, texture.memory, nil)
-}
-
-func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, width, height uint32, pixels []byte, samplerInfo vk.SamplerCreateInfo) textureData {
+func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, width, height uint32, pixels []byte, samplerInfo vk.SamplerCreateInfo) ash.VulkanImageResource {
 	stagingBuf := createBufferWithAddress(dev, gpu, vk.BufferUsageFlags(vk.BufferUsageTransferSrcBit), pixels)
 
 	var img vk.Image
@@ -879,7 +816,7 @@ func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 		log.Fatal("CreateSampler (texture):", err)
 	}
 
-	return textureData{image: img, memory: mem, view: view, sampler: sampler}
+	return ash.NewImageResourceFromHandles(dev, img, mem, view, sampler, vk.FormatR8g8b8a8Unorm)
 }
 
 func defaultSamplerCreateInfo() vk.SamplerCreateInfo {
@@ -896,12 +833,12 @@ func defaultSamplerCreateInfo() vk.SamplerCreateInfo {
 	}
 }
 
-func createDummyTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext) textureData {
+func createDummyTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext) ash.VulkanImageResource {
 	return createTexture(dev, gpu, queue, cmdCtx, 1, 1, []byte{255, 255, 255, 255}, defaultSamplerCreateInfo())
 }
 
-func loadGLTFTextures(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, doc *gltf.Document, baseDir string) []textureData {
-	textures := make([]textureData, 0, len(doc.Textures)+1)
+func loadGLTFTextures(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, doc *gltf.Document, baseDir string) []ash.VulkanImageResource {
+	textures := make([]ash.VulkanImageResource, 0, len(doc.Textures)+1)
 	textures = append(textures, createDummyTexture(dev, gpu, queue, cmdCtx))
 	for i, tex := range doc.Textures {
 		if tex == nil || tex.Source == nil {
@@ -1002,16 +939,16 @@ func addressModeFromGLTF(mode gltf.WrappingMode) vk.SamplerAddressMode {
 	}
 }
 
-func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []textureData, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
+func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []ash.VulkanImageResource, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
 	textureCount := uint32(len(textures))
 	if textureCount == 0 {
 		log.Fatal("createDescriptorSets: texture array must contain at least the fallback texture")
 	}
 
-	immutableFallbackSampler := []vk.Sampler{textures[0].sampler}
+	immutableFallbackSampler := []vk.Sampler{textures[0].Sampler}
 	immutableTextureSamplers := make([]vk.Sampler, 0, len(textures))
 	for _, texture := range textures {
-		immutableTextureSamplers = append(immutableTextureSamplers, texture.sampler)
+		immutableTextureSamplers = append(immutableTextureSamplers, texture.Sampler)
 	}
 
 	var layout vk.DescriptorSetLayout
@@ -1051,8 +988,8 @@ func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStruc
 	textureInfos := make([]vk.DescriptorImageInfo, 0, len(textures))
 	for _, texture := range textures {
 		textureInfos = append(textureInfos, vk.DescriptorImageInfo{
-			Sampler:     texture.sampler,
-			ImageView:   texture.view,
+			Sampler:     texture.Sampler,
+			ImageView:   texture.View,
 			ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal,
 		})
 	}
