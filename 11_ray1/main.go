@@ -214,7 +214,7 @@ func main() {
 // --- Helper functions ---
 
 func createBufferWithAddress(dev vk.Device, gpu vk.PhysicalDevice, data []byte, usage vk.BufferUsageFlags) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferHostVisible(dev, gpu, usage, data, true)
+	buf, err := ash.NewBufferHostVisible(dev, gpu, data, true, usage)
 	if err != nil {
 		log.Fatal("NewBufferHostVisible:", err)
 	}
@@ -222,7 +222,7 @@ func createBufferWithAddress(dev vk.Device, gpu vk.PhysicalDevice, data []byte, 
 }
 
 func createBufferWithAddress2(dev vk.Device, gpu vk.PhysicalDevice, data []uint32, usage vk.BufferUsageFlags) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferHostVisible(dev, gpu, usage, data, true)
+	buf, err := ash.NewBufferHostVisible(dev, gpu, data, true, usage)
 	if err != nil {
 		log.Fatal("NewBufferHostVisible:", err)
 	}

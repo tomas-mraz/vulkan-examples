@@ -513,7 +513,7 @@ func createGeometryNodesBuffer(dev vk.Device, gpu vk.PhysicalDevice, prims []pri
 // --- Helper functions ---
 
 func createBufferWithAddress[T any](dev vk.Device, gpu vk.PhysicalDevice, usage vk.BufferUsageFlags, data []T) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferHostVisible(dev, gpu, usage, data, true)
+	buf, err := ash.NewBufferHostVisible(dev, gpu, data, true, usage)
 	if err != nil {
 		log.Fatal("NewBufferHostVisible:", err)
 	}
@@ -521,7 +521,7 @@ func createBufferWithAddress[T any](dev vk.Device, gpu vk.PhysicalDevice, usage 
 }
 
 func createDeviceLocalBuffer(dev vk.Device, gpu vk.PhysicalDevice, usage vk.BufferUsageFlags, size uint64) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferDeviceLocal(dev, gpu, usage, size, true)
+	buf, err := ash.NewBufferDeviceLocal(dev, gpu, size, true, usage)
 	if err != nil {
 		log.Fatal("NewBufferDeviceLocal:", err)
 	}

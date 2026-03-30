@@ -97,9 +97,9 @@ func main() {
 	buffer, err := asch.NewBufferHostVisible(
 		device.Device,
 		device.GpuDevice,
-		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
 		vertices,
 		false,
+		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
 	)
 	if err != nil {
 		log.Fatal(err)

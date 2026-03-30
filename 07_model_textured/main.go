@@ -116,9 +116,9 @@ func main() {
 	vertexBuf, err := asch.NewBufferHostVisible(
 		device.Device,
 		device.GpuDevice,
-		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
 		model.Vertices,
 		false,
+		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -127,9 +127,9 @@ func main() {
 	indexBuf, err := asch.NewBufferHostVisible(
 		device.Device,
 		device.GpuDevice,
-		vk.BufferUsageFlags(vk.BufferUsageIndexBufferBit),
 		model.Indices,
 		false,
+		vk.BufferUsageFlags(vk.BufferUsageIndexBufferBit),
 	)
 	if err != nil {
 		log.Fatal(err)
