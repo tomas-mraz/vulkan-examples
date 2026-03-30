@@ -62,10 +62,8 @@ func (u *uniformData) Bytes() []byte {
 
 // primitiveData holds per-primitive geometry resources.
 type primitiveData struct {
-	vertexBuf     vk.Buffer
-	vertexMem     vk.DeviceMemory
-	indexBuf      vk.Buffer
-	indexMem      vk.DeviceMemory
+	vertexBuf     ash.VulkanBufferResource
+	indexBuf      ash.VulkanBufferResource
 	vertexCount   uint32
 	triangleCount uint32
 	transform     [12]float32
@@ -83,10 +81,8 @@ type textureData struct {
 // modelData owns primitive buffers plus a single multi-geometry BLAS for the model.
 type modelData struct {
 	primitives  []primitiveData
-	geometryBuf vk.Buffer
-	geometryMem vk.DeviceMemory
-	blasBuf     vk.Buffer
-	blasMem     vk.DeviceMemory
+	geometryBuf ash.VulkanBufferResource
+	blasBuf     ash.VulkanBufferResource
 	blas        vk.AccelerationStructure
 	textures    []textureData
 }
@@ -223,10 +219,8 @@ func main() {
 	log.Printf("Loaded %d primitives into one BLAS", len(model.primitives))
 	cleanup.Add(ash.DestroyerFunc(func() {
 		for i := range model.primitives {
-			vk.DestroyBuffer(dev, model.primitives[i].indexBuf, nil)
-			vk.FreeMemory(dev, model.primitives[i].indexMem, nil)
-			vk.DestroyBuffer(dev, model.primitives[i].vertexBuf, nil)
-			vk.FreeMemory(dev, model.primitives[i].vertexMem, nil)
+			model.primitives[i].indexBuf.Destroy()
+			model.primitives[i].vertexBuf.Destroy()
 		}
 	}))
 	cleanup.Add(ash.DestroyerFunc(func() {
@@ -235,21 +229,18 @@ func main() {
 		}
 	}))
 	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyBuffer(dev, model.geometryBuf, nil)
-		vk.FreeMemory(dev, model.geometryMem, nil)
+		model.geometryBuf.Destroy()
 	}))
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyAccelerationStructure(dev, model.blas, nil)
-		vk.DestroyBuffer(dev, model.blasBuf, nil)
-		vk.FreeMemory(dev, model.blasMem, nil)
+		model.blasBuf.Destroy()
 	}))
 
 	// --- Build TLAS with one instance for the model BLAS ---
-	tlasBuf, tlasMem, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.blas)
+	tlasBuf, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.blas)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyAccelerationStructure(dev, tlas, nil)
-		vk.DestroyBuffer(dev, tlasBuf, nil)
-		vk.FreeMemory(dev, tlasMem, nil)
+		tlasBuf.Destroy()
 	}))
 
 	// --- Create storage image ---
@@ -267,7 +258,7 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), model.geometryBuf, model.textures, &uniforms)
+	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), model.geometryBuf.Buffer, model.textures, &uniforms)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyDescriptorPool(dev, descPool, nil)
 		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
@@ -279,11 +270,8 @@ func main() {
 		vk.DestroyPipelineLayout(dev, pipelineLayout, nil)
 	}))
 	// --- Shader Binding Table ---
-	raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem := createSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyBuffer(dev, sbtBuf, nil)
-		vk.FreeMemory(dev, sbtMem, nil)
-	}))
+	raygenSBT, missSBT, hitSBT, sbtBuf := createSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment)
+	cleanup.Add(&sbtBuf)
 
 	// --- Sync objects ---
 	sync, err := ash.NewSyncObjects(dev)
@@ -385,13 +373,13 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 
 				// Create GPU buffers with device address
 				rtUsage := vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit | vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit | vk.BufferUsageStorageBufferBit)
-				vertexBuf, vertexMem, err := ash.NewBufferWithDeviceAddress(dev, gpu, rtUsage,
-					uint64(len(vertices)*4), unsafe.Pointer(&vertices[0]))
+				vertexBuf, err := ash.NewHostVisibleBufferResource(dev, gpu, rtUsage,
+					uint64(len(vertices)*4), unsafe.Pointer(&vertices[0]), true)
 				if err != nil {
 					log.Fatal(err)
 				}
-				indexBuf, indexMem, err := ash.NewBufferWithDeviceAddress(dev, gpu, rtUsage,
-					uint64(len(indices)*4), unsafe.Pointer(&indices[0]))
+				indexBuf, err := ash.NewHostVisibleBufferResource(dev, gpu, rtUsage,
+					uint64(len(indices)*4), unsafe.Pointer(&indices[0]), true)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -411,8 +399,8 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 				}
 
 				prims = append(prims, primitiveData{
-					vertexBuf: vertexBuf, vertexMem: vertexMem,
-					indexBuf: indexBuf, indexMem: indexMem,
+					vertexBuf:     vertexBuf,
+					indexBuf:      indexBuf,
 					vertexCount:   uint32(len(positions)),
 					triangleCount: uint32(len(indices) / 3),
 					transform:     vkTransformMatrix(worldTransform),
@@ -434,14 +422,12 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 		log.Fatal("gltf model has no primitives")
 	}
 
-	blasBuf, blasMem, blas := buildBLAS(dev, gpu, queue, cmdCtx, prims)
-	geometryBuf, geometryMem := createGeometryNodesBuffer(dev, gpu, prims)
+	blasBuf, blas := buildBLAS(dev, gpu, queue, cmdCtx, prims)
+	geometryBuf := createGeometryNodesBuffer(dev, gpu, prims)
 	return modelData{
 		primitives:  prims,
 		geometryBuf: geometryBuf,
-		geometryMem: geometryMem,
 		blasBuf:     blasBuf,
-		blasMem:     blasMem,
 		blas:        blas,
 		textures:    textures,
 	}
@@ -562,24 +548,24 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 	m[3][3] = 0
 }
 
-func createGeometryNodesBuffer(dev vk.Device, gpu vk.PhysicalDevice, prims []primitiveData) (vk.Buffer, vk.DeviceMemory) {
+func createGeometryNodesBuffer(dev vk.Device, gpu vk.PhysicalDevice, prims []primitiveData) ash.VulkanBufferResource {
 	nodes := make([]geometryNode, len(prims))
 	for i := range prims {
 		nodes[i] = geometryNode{
-			VertexBufferDeviceAddress: uint64(ash.GetBufferDeviceAddress(dev, prims[i].vertexBuf)),
-			IndexBufferDeviceAddress:  uint64(ash.GetBufferDeviceAddress(dev, prims[i].indexBuf)),
+			VertexBufferDeviceAddress: uint64(prims[i].vertexBuf.DeviceAddress),
+			IndexBufferDeviceAddress:  uint64(prims[i].indexBuf.DeviceAddress),
 			TextureIndexBaseColor:     prims[i].baseColorTex,
 			TextureIndexOcclusion:     prims[i].occlusionTex,
 		}
 	}
-	buf, mem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit|vk.BufferUsageShaderDeviceAddressBit),
+	buf, err := ash.NewHostVisibleBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit),
 		uint64(len(nodes))*uint64(unsafe.Sizeof(nodes[0])),
-		unsafe.Pointer(&nodes[0]))
+		unsafe.Pointer(&nodes[0]), true)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return buf, mem
+	return buf
 }
 
 // --- Helper functions ---
@@ -609,7 +595,7 @@ func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.A
 }
 
 // buildBLAS creates one BLAS containing one geometry per glTF primitive.
-func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, prims []primitiveData) (vk.Buffer, vk.DeviceMemory, vk.AccelerationStructure) {
+func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, prims []primitiveData) (ash.VulkanBufferResource, vk.AccelerationStructure) {
 	geometries := make([]vk.AccelerationStructureGeometry, 0, len(prims))
 	primitiveCounts := make([]uint32, 0, len(prims))
 	rangeInfos := make([]vk.AccelerationStructureBuildRangeInfo, 0, len(prims))
@@ -618,19 +604,19 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	for i := range prims {
 		transformMatrices[i] = prims[i].transform
 	}
-	transformBuf, transformMem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit),
+	transformBuf, err := ash.NewHostVisibleBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit),
 		uint64(len(transformMatrices))*uint64(unsafe.Sizeof(transformMatrices[0])),
-		unsafe.Pointer(&transformMatrices[0]))
+		unsafe.Pointer(&transformMatrices[0]), true)
 	if err != nil {
 		log.Fatal(err)
 	}
-	transformAddr := ash.GetBufferDeviceAddress(dev, transformBuf)
+	transformAddr := transformBuf.DeviceAddress
 	transformStride := vk.DeviceAddress(unsafe.Sizeof(transformMatrices[0]))
 
 	for i := range prims {
-		vertexAddr := ash.GetBufferDeviceAddress(dev, prims[i].vertexBuf)
-		indexAddr := ash.GetBufferDeviceAddress(dev, prims[i].indexBuf)
+		vertexAddr := prims[i].vertexBuf.DeviceAddress
+		indexAddr := prims[i].indexBuf.DeviceAddress
 
 		var trianglesData vk.AccelerationStructureGeometryTrianglesData
 		trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
@@ -670,29 +656,29 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	log.Printf("BLAS size: AS=%d, scratch=%d (geometries=%d)", sizeInfo.AccelerationStructureSize, sizeInfo.BuildScratchSize, len(geometries))
 
 	// Create AS buffer
-	asBuf, asMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit|vk.BufferUsageShaderDeviceAddressBit),
-		uint64(sizeInfo.AccelerationStructureSize))
+	asBuf, err := ash.NewDeviceLocalBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit),
+		uint64(sizeInfo.AccelerationStructureSize), true)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	var as vk.AccelerationStructure
 	if err := vk.Error(vk.CreateAccelerationStructure(dev, &vk.AccelerationStructureCreateInfo{
-		SType: vk.StructureTypeAccelerationStructureCreateInfo, Buffer: asBuf,
+		SType: vk.StructureTypeAccelerationStructureCreateInfo, Buffer: asBuf.Buffer,
 		Size: sizeInfo.AccelerationStructureSize, Type: vk.AccelerationStructureTypeBottomLevel,
 	}, nil, &as)); err != nil {
 		log.Fatal("CreateAccelerationStructure (BLAS):", err)
 	}
 
 	// Scratch buffer
-	scratchBuf, scratchMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit|vk.BufferUsageShaderDeviceAddressBit),
-		uint64(sizeInfo.BuildScratchSize))
+	scratchBuf, err := ash.NewDeviceLocalBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit),
+		uint64(sizeInfo.BuildScratchSize), true)
 	if err != nil {
 		log.Fatal(err)
 	}
-	scratchAddr := ash.GetBufferDeviceAddress(dev, scratchBuf)
+	scratchAddr := scratchBuf.DeviceAddress
 
 	// Create a fresh struct for the build call (PassRef caches the C struct)
 	buildInfo2 := vk.AccelerationStructureBuildGeometryInfo{
@@ -715,15 +701,13 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 		log.Fatal("EndOneTime:", err)
 	}
 
-	vk.DestroyBuffer(dev, transformBuf, nil)
-	vk.FreeMemory(dev, transformMem, nil)
-	vk.DestroyBuffer(dev, scratchBuf, nil)
-	vk.FreeMemory(dev, scratchMem, nil)
-	return asBuf, asMem, as
+	transformBuf.Destroy()
+	scratchBuf.Destroy()
+	return asBuf, as
 }
 
 // buildTLAS creates a TLAS with one instance that references the model BLAS.
-func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas vk.AccelerationStructure) (vk.Buffer, vk.DeviceMemory, vk.AccelerationStructure) {
+func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas vk.AccelerationStructure) (ash.VulkanBufferResource, vk.AccelerationStructure) {
 	instanceData := make([]byte, 64)
 	transform := [12]float32{1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0}
 	blasAddr := vk.GetAccelerationStructureDeviceAddress(dev, &vk.AccelerationStructureDeviceAddressInfo{
@@ -741,13 +725,13 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	instanceData[55] = 0x01 // VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR
 	*(*uint64)(unsafe.Pointer(&instanceData[56])) = uint64(blasAddr)
 
-	instanceBuf, instanceMem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit|vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit),
-		uint64(len(instanceData)), unsafe.Pointer(&instanceData[0]))
+	instanceBuf, err := ash.NewHostVisibleBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit),
+		uint64(len(instanceData)), unsafe.Pointer(&instanceData[0]), true)
 	if err != nil {
 		log.Fatal(err)
 	}
-	instanceAddr := ash.GetBufferDeviceAddress(dev, instanceBuf)
+	instanceAddr := instanceBuf.DeviceAddress
 
 	var instancesData vk.AccelerationStructureGeometryInstancesData
 	instancesData.SType = vk.StructureTypeAccelerationStructureGeometryInstancesData
@@ -774,28 +758,28 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	sizeInfo.Deref()
 	log.Printf("TLAS size: AS=%d, scratch=%d (instances=1)", sizeInfo.AccelerationStructureSize, sizeInfo.BuildScratchSize)
 
-	asBuf, asMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit|vk.BufferUsageShaderDeviceAddressBit),
-		uint64(sizeInfo.AccelerationStructureSize))
+	asBuf, err := ash.NewDeviceLocalBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit),
+		uint64(sizeInfo.AccelerationStructureSize), true)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	var as vk.AccelerationStructure
 	if err := vk.Error(vk.CreateAccelerationStructure(dev, &vk.AccelerationStructureCreateInfo{
-		SType: vk.StructureTypeAccelerationStructureCreateInfo, Buffer: asBuf,
+		SType: vk.StructureTypeAccelerationStructureCreateInfo, Buffer: asBuf.Buffer,
 		Size: sizeInfo.AccelerationStructureSize, Type: vk.AccelerationStructureTypeTopLevel,
 	}, nil, &as)); err != nil {
 		log.Fatal("CreateAccelerationStructure (TLAS):", err)
 	}
 
-	scratchBuf, scratchMem, err := ash.NewDeviceLocalBuffer(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit|vk.BufferUsageShaderDeviceAddressBit),
-		uint64(sizeInfo.BuildScratchSize))
+	scratchBuf, err := ash.NewDeviceLocalBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit),
+		uint64(sizeInfo.BuildScratchSize), true)
 	if err != nil {
 		log.Fatal(err)
 	}
-	scratchAddr := ash.GetBufferDeviceAddress(dev, scratchBuf)
+	scratchAddr := scratchBuf.DeviceAddress
 
 	buildInfo2 := vk.AccelerationStructureBuildGeometryInfo{
 		SType:                    vk.StructureTypeAccelerationStructureBuildGeometryInfo,
@@ -819,11 +803,9 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 		log.Fatal("EndOneTime:", err)
 	}
 
-	vk.DestroyBuffer(dev, scratchBuf, nil)
-	vk.FreeMemory(dev, scratchMem, nil)
-	vk.DestroyBuffer(dev, instanceBuf, nil)
-	vk.FreeMemory(dev, instanceMem, nil)
-	return asBuf, asMem, as
+	scratchBuf.Destroy()
+	instanceBuf.Destroy()
+	return asBuf, as
 }
 
 func destroyTexture(dev vk.Device, texture textureData) {
@@ -834,7 +816,7 @@ func destroyTexture(dev vk.Device, texture textureData) {
 }
 
 func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, width, height uint32, pixels []byte, samplerInfo vk.SamplerCreateInfo) textureData {
-	stagingBuf, stagingMem, err := ash.NewBufferWithDeviceAddress(dev, gpu, vk.BufferUsageFlags(vk.BufferUsageTransferSrcBit), uint64(len(pixels)), unsafe.Pointer(&pixels[0]))
+	stagingBuf, err := ash.NewHostVisibleBufferResource(dev, gpu, vk.BufferUsageFlags(vk.BufferUsageTransferSrcBit), uint64(len(pixels)), unsafe.Pointer(&pixels[0]), true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -880,7 +862,7 @@ func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 			DstAccessMask:       vk.AccessFlags(vk.AccessTransferWriteBit),
 			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
 		}})
-	vk.CmdCopyBufferToImage(cmd, stagingBuf, img, vk.ImageLayoutTransferDstOptimal, 1, []vk.BufferImageCopy{{
+	vk.CmdCopyBufferToImage(cmd, stagingBuf.Buffer, img, vk.ImageLayoutTransferDstOptimal, 1, []vk.BufferImageCopy{{
 		ImageSubresource: vk.ImageSubresourceLayers{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LayerCount: 1},
 		ImageExtent:      vk.Extent3D{Width: width, Height: height, Depth: 1},
 	}})
@@ -897,8 +879,7 @@ func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 		log.Fatal("EndOneTime:", err)
 	}
 
-	vk.DestroyBuffer(dev, stagingBuf, nil)
-	vk.FreeMemory(dev, stagingMem, nil)
+	stagingBuf.Destroy()
 
 	var view vk.ImageView
 	if err := vk.Error(vk.CreateImageView(dev, &vk.ImageViewCreateInfo{
@@ -1179,7 +1160,7 @@ func createRTPipeline(dev vk.Device, descLayout vk.DescriptorSetLayout) (vk.Pipe
 	return pipelineLayout, pip
 }
 
-func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handleSize, handleAlignment uint32) (vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, vk.Buffer, vk.DeviceMemory) {
+func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handleSize, handleAlignment uint32) (vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, ash.VulkanBufferResource) {
 	groupCount := uint32(4) // raygen, miss, shadow miss, hit
 	handleSizeAligned := ash.AlignUp(handleSize, handleAlignment)
 	// Read all shader group handles
@@ -1190,18 +1171,18 @@ func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handl
 	}
 
 	// Create single SBT buffer containing all groups
-	sbtBuf, sbtMem, err := ash.NewBufferWithDeviceAddress(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageShaderBindingTableBit|vk.BufferUsageShaderDeviceAddressBit),
-		uint64(sbtSize), unsafe.Pointer(&handleStorage[0]))
+	sbtBuf, err := ash.NewHostVisibleBufferResource(dev, gpu,
+		vk.BufferUsageFlags(vk.BufferUsageShaderBindingTableBit),
+		uint64(sbtSize), unsafe.Pointer(&handleStorage[0]), true)
 	if err != nil {
 		log.Fatal(err)
 	}
-	sbtAddr := ash.GetBufferDeviceAddress(dev, sbtBuf)
+	sbtAddr := sbtBuf.DeviceAddress
 
 	raygenSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr, Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
 	missSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr + vk.DeviceAddress(handleSizeAligned), Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(2 * handleSizeAligned)}
 	hitSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr + vk.DeviceAddress(3*handleSizeAligned), Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
-	return raygenSBT, missSBT, hitSBT, sbtBuf, sbtMem
+	return raygenSBT, missSBT, hitSBT, sbtBuf
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.VulkanCommandContext,
