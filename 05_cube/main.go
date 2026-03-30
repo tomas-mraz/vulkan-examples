@@ -68,7 +68,7 @@ func main() {
 	}
 	defer window.Destroy()
 
-	var cleanup asch.Destroyer
+	var cleanup asch.Cleanup
 
 	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -82,14 +82,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(device.Destroy)
+	cleanup.Add(&device)
 
 	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := asch.NewSwapchain(device.Device, device.GpuDevice, device.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(swapchain.Destroy)
+	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	// Depth buffer via framework
@@ -97,7 +97,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(depth.Destroy)
+	cleanup.Add(&depth)
 
 	// Renderer with depth (render pass + command pool)
 	renderer, err := asch.NewRendererWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
@@ -112,7 +112,7 @@ func main() {
 	if err := renderer.CreateCommandBuffers(swapchainLen); err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(renderer.Destroy)
+	cleanup.Add(&renderer)
 
 	// Texture via framework
 	img, err := png.Decode(bytes.NewReader(gopherPng))
@@ -127,7 +127,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(texture.Destroy)
+	cleanup.Add(&texture)
 	asch.TransitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(),
 		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
@@ -136,34 +136,35 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(uniforms.Destroy)
+	cleanup.Add(&uniforms)
 
 	// Descriptor set layout + pool + sets
-	descLayout, descPool, descSets, err := createDescriptors(device.Device, swapchainLen, uniforms.GetBuffers(), texture.GetView(), texture.GetSampler())
+	desc, err := asch.NewDescriptorUBOTexture(device.Device, &uniforms, &texture, swapchainLen)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(func() { vk.DestroyDescriptorSetLayout(device.Device, descLayout, nil) })
-	cleanup.Add(func() { vk.DestroyDescriptorPool(device.Device, descPool, nil) })
+	cleanup.Add(&desc)
 
 	// Pipeline
-	pipelineLayout, pipelineObj, pipelineCache, err := createCubePipeline(device.Device, renderer.RenderPass, descLayout)
+	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
+		VertShaderData:       vertShaderCode,
+		FragShaderData:       fragShaderCode,
+		VertexBindings:       []vk.VertexInputBindingDescription{},
+		VertexAttributes:     []vk.VertexInputAttributeDescription{},
+		DescriptorSetLayouts: []vk.DescriptorSetLayout{desc.GetLayout()},
+		DepthTestEnable:      true,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(func() {
-		vk.DestroyPipeline(device.Device, pipelineObj, nil)
-		vk.DestroyPipelineCache(device.Device, pipelineCache, nil)
-		vk.DestroyPipelineLayout(device.Device, pipelineLayout, nil)
-	})
+	cleanup.Add(&gfx)
 
 	// Sync objects
-	fence, semaphore, err := createSyncObjects(device.Device)
+	sync, err := asch.NewSyncObjects(device.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(func() { vk.DestroyFence(device.Device, fence, nil) })
-	cleanup.Add(func() { vk.DestroySemaphore(device.Device, semaphore, nil) })
+	cleanup.Add(&sync)
 
 	// Camera matrices
 	var projMatrix, viewMatrix, modelMatrix lin.Mat4x4
@@ -186,8 +187,8 @@ func main() {
 		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, lin.DegreesToRadians(elapsed))
 
 		if !drawCubeFrame(device.Device, device.Queue, swapchain, renderer,
-			fence, semaphore,
-			pipelineLayout, pipelineObj, descSets,
+			sync.Fence, sync.Semaphore,
+			gfx, desc.GetSets(),
 			&uniforms,
 			&projMatrix, &viewMatrix, &modelMatrix) {
 			break
@@ -198,123 +199,6 @@ func main() {
 }
 
 
-
-func createDescriptors(dev vk.Device, count uint32, uniformBuffers []vk.Buffer, texView vk.ImageView, sampler vk.Sampler) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet, error) {
-	var layout vk.DescriptorSetLayout
-	// Use immutable sampler to work around vulkan binding bug where nil PImmutableSamplers
-	// gets converted to a non-NULL C pointer.
-	if err := vk.Error(vk.CreateDescriptorSetLayout(dev, &vk.DescriptorSetLayoutCreateInfo{
-		SType: vk.StructureTypeDescriptorSetLayoutCreateInfo, BindingCount: 2,
-		PBindings: []vk.DescriptorSetLayoutBinding{
-			{Binding: 0, DescriptorType: vk.DescriptorTypeUniformBuffer, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), PImmutableSamplers: []vk.Sampler{vk.NullSampler}},
-			{Binding: 1, DescriptorType: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageFragmentBit), PImmutableSamplers: []vk.Sampler{sampler}},
-		},
-	}, nil, &layout)); err != nil {
-		return layout, nil, nil, err
-	}
-
-	var pool vk.DescriptorPool
-	if err := vk.Error(vk.CreateDescriptorPool(dev, &vk.DescriptorPoolCreateInfo{
-		SType: vk.StructureTypeDescriptorPoolCreateInfo, MaxSets: count, PoolSizeCount: 2,
-		PPoolSizes: []vk.DescriptorPoolSize{
-			{Type: vk.DescriptorTypeUniformBuffer, DescriptorCount: count},
-			{Type: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: count},
-		},
-	}, nil, &pool)); err != nil {
-		return layout, pool, nil, err
-	}
-
-	layouts := make([]vk.DescriptorSetLayout, count)
-	for i := range layouts {
-		layouts[i] = layout
-	}
-	sets := make([]vk.DescriptorSet, count)
-	for i := uint32(0); i < count; i++ {
-		if err := vk.Error(vk.AllocateDescriptorSets(dev, &vk.DescriptorSetAllocateInfo{
-			SType: vk.StructureTypeDescriptorSetAllocateInfo, DescriptorPool: pool,
-			DescriptorSetCount: 1, PSetLayouts: []vk.DescriptorSetLayout{layout},
-		}, &sets[i])); err != nil {
-			return layout, pool, sets, err
-		}
-	}
-
-	for i := uint32(0); i < count; i++ {
-		vk.UpdateDescriptorSets(dev, 2, []vk.WriteDescriptorSet{
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 0, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeUniformBuffer,
-				PBufferInfo:    []vk.DescriptorBufferInfo{{Buffer: uniformBuffers[i], Offset: 0, Range: vk.DeviceSize(uniformDataSize)}}},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 1, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeCombinedImageSampler,
-				PImageInfo:     []vk.DescriptorImageInfo{{Sampler: sampler, ImageView: texView, ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal}}},
-		}, 0, nil)
-	}
-
-	return layout, pool, sets, nil
-}
-
-func createCubePipeline(dev vk.Device, renderPass vk.RenderPass, descLayout vk.DescriptorSetLayout) (vk.PipelineLayout, vk.Pipeline, vk.PipelineCache, error) {
-	var pipelineLayout vk.PipelineLayout
-	if err := vk.Error(vk.CreatePipelineLayout(dev, &vk.PipelineLayoutCreateInfo{
-		SType: vk.StructureTypePipelineLayoutCreateInfo, SetLayoutCount: 1,
-		PSetLayouts: []vk.DescriptorSetLayout{descLayout},
-	}, nil, &pipelineLayout)); err != nil {
-		return pipelineLayout, nil, nil, err
-	}
-
-	vertModule, err := asch.LoadShaderFromBytes(dev, vertShaderCode)
-	if err != nil {
-		return pipelineLayout, nil, nil, err
-	}
-	defer vk.DestroyShaderModule(dev, vertModule, nil)
-
-	fragModule, err := asch.LoadShaderFromBytes(dev, fragShaderCode)
-	if err != nil {
-		return pipelineLayout, nil, nil, err
-	}
-	defer vk.DestroyShaderModule(dev, fragModule, nil)
-
-	var cache vk.PipelineCache
-	vk.CreatePipelineCache(dev, &vk.PipelineCacheCreateInfo{SType: vk.StructureTypePipelineCacheCreateInfo}, nil, &cache)
-
-	pipelines := make([]vk.Pipeline, 1)
-	if err := vk.Error(vk.CreateGraphicsPipelines(dev, cache, 1, []vk.GraphicsPipelineCreateInfo{{
-		SType: vk.StructureTypeGraphicsPipelineCreateInfo, Layout: pipelineLayout, RenderPass: renderPass,
-		StageCount: 2,
-		PStages: []vk.PipelineShaderStageCreateInfo{
-			{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageVertexBit, Module: vertModule, PName: []byte("main\x00")},
-			{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFragmentBit, Module: fragModule, PName: []byte("main\x00")},
-		},
-		PVertexInputState:   &vk.PipelineVertexInputStateCreateInfo{SType: vk.StructureTypePipelineVertexInputStateCreateInfo},
-		PInputAssemblyState: &vk.PipelineInputAssemblyStateCreateInfo{SType: vk.StructureTypePipelineInputAssemblyStateCreateInfo, Topology: vk.PrimitiveTopologyTriangleList},
-		PViewportState:      &vk.PipelineViewportStateCreateInfo{SType: vk.StructureTypePipelineViewportStateCreateInfo, ViewportCount: 1, ScissorCount: 1},
-		PRasterizationState: &vk.PipelineRasterizationStateCreateInfo{SType: vk.StructureTypePipelineRasterizationStateCreateInfo, PolygonMode: vk.PolygonModeFill, CullMode: vk.CullModeFlags(vk.CullModeBackBit), FrontFace: vk.FrontFaceCounterClockwise, LineWidth: 1},
-		PMultisampleState:   &vk.PipelineMultisampleStateCreateInfo{SType: vk.StructureTypePipelineMultisampleStateCreateInfo, RasterizationSamples: vk.SampleCount1Bit},
-		PDepthStencilState: &vk.PipelineDepthStencilStateCreateInfo{
-			SType: vk.StructureTypePipelineDepthStencilStateCreateInfo, DepthTestEnable: vk.True, DepthWriteEnable: vk.True, DepthCompareOp: vk.CompareOpLessOrEqual,
-			Back:  vk.StencilOpState{FailOp: vk.StencilOpKeep, PassOp: vk.StencilOpKeep, CompareOp: vk.CompareOpAlways},
-			Front: vk.StencilOpState{FailOp: vk.StencilOpKeep, PassOp: vk.StencilOpKeep, CompareOp: vk.CompareOpAlways},
-		},
-		PColorBlendState: &vk.PipelineColorBlendStateCreateInfo{SType: vk.StructureTypePipelineColorBlendStateCreateInfo, AttachmentCount: 1,
-			PAttachments: []vk.PipelineColorBlendAttachmentState{{ColorWriteMask: 0xF}}},
-		PDynamicState: &vk.PipelineDynamicStateCreateInfo{SType: vk.StructureTypePipelineDynamicStateCreateInfo, DynamicStateCount: 2,
-			PDynamicStates: []vk.DynamicState{vk.DynamicStateViewport, vk.DynamicStateScissor}},
-	}}, nil, pipelines)); err != nil {
-		return pipelineLayout, nil, cache, err
-	}
-	return pipelineLayout, pipelines[0], cache, nil
-}
-
-func createSyncObjects(dev vk.Device) (vk.Fence, vk.Semaphore, error) {
-	var fence vk.Fence
-	var sem vk.Semaphore
-	if err := vk.Error(vk.CreateFence(dev, &vk.FenceCreateInfo{SType: vk.StructureTypeFenceCreateInfo}, nil, &fence)); err != nil {
-		return fence, sem, err
-	}
-	if err := vk.Error(vk.CreateSemaphore(dev, &vk.SemaphoreCreateInfo{SType: vk.StructureTypeSemaphoreCreateInfo}, nil, &sem)); err != nil {
-		return fence, sem, err
-	}
-	return fence, sem, nil
-}
 
 func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj, view, model *lin.Mat4x4) {
 	var VP, MVP lin.Mat4x4
@@ -333,8 +217,7 @@ func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj
 func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	r asch.VulkanRenderInfo,
 	fence vk.Fence, semaphore vk.Semaphore,
-	pipelineLayout vk.PipelineLayout, pipeline vk.Pipeline,
-	descSets []vk.DescriptorSet,
+	gfx asch.VulkanGfxPipelineInfo, descSets []vk.DescriptorSet,
 	uniforms *asch.VulkanUniformBuffers,
 	proj, view, model *lin.Mat4x4,
 ) bool {
@@ -361,10 +244,8 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 		ClearValueCount: 2, PClearValues: clearValues,
 	}, vk.SubpassContentsInline)
 
-	vk.CmdBindPipeline(cmd, vk.PipelineBindPointGraphics, pipeline)
-	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointGraphics, pipelineLayout, 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
-	vk.CmdSetViewport(cmd, 0, 1, []vk.Viewport{{Width: float32(s.DisplaySize.Width), Height: float32(s.DisplaySize.Height), MaxDepth: 1.0}})
-	vk.CmdSetScissor(cmd, 0, 1, []vk.Rect2D{{Extent: s.DisplaySize}})
+	vk.CmdBindPipeline(cmd, vk.PipelineBindPointGraphics, gfx.GetPipeline())
+	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointGraphics, gfx.GetLayout(), 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
 	vk.CmdDraw(cmd, 36, 1, 0, 0)
 	vk.CmdEndRenderPass(cmd)
 	vk.EndCommandBuffer(cmd)
