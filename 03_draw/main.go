@@ -69,17 +69,25 @@ func main() {
 	}
 	cleanup.Add(&swapchain)
 
-	renderer, err := asch.NewRenderer(device.Device, swapchain.DisplayFormat)
+	rasterPass, err := asch.NewRasterPass(device.Device, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := swapchain.CreateFramebuffers(renderer.RenderPass, vk.NullImageView); err != nil {
+	cleanup.Add(&rasterPass)
+	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), vk.NullImageView); err != nil {
 		log.Fatal(err)
 	}
-	if err := renderer.CreateCommandBuffers(swapchain.DefaultSwapchainLen()); err != nil {
+	cmdCtx, err := asch.NewCommandContext(device.Device, 0, swapchain.DefaultSwapchainLen())
+	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&renderer)
+	cleanup.Add(&cmdCtx)
+
+	sync, err := asch.NewSyncObjects(device.Device)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cleanup.Add(&sync)
 
 	buffer, err := asch.NewBuffer(device.Device, device.GpuDevice)
 	if err != nil {
@@ -87,7 +95,7 @@ func main() {
 	}
 	cleanup.Add(&buffer)
 
-	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
+	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
 		VertShaderData: vertShaderCode,
 		FragShaderData: fragShaderCode,
 	})
@@ -96,25 +104,62 @@ func main() {
 	}
 	cleanup.Add(&gfx)
 
-	// Record command buffers (static, no per-frame updates needed)
-	asch.VulkanStart(device.Device, &swapchain, &renderer, &buffer, &gfx)
+	if err := recordCommandBuffers(swapchain, rasterPass, cmdCtx, buffer, gfx); err != nil {
+		log.Fatal(err)
+	}
 
 	log.Println("Vulkan initialized, starting render loop")
 
 	for !window.ShouldClose() {
 		glfw.PollEvents()
 		if window.GetAttrib(glfw.Iconified) != 1 {
-			if !drawFrame(device.Device, device.Queue, swapchain, renderer) {
+			if !drawFrame(device.Device, device.Queue, swapchain, cmdCtx, sync.Fence, sync.Semaphore) {
 				break
 			}
 		}
 	}
 }
 
-func drawFrame(device vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, r asch.VulkanRenderInfo) bool {
+func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext,
+	buffer asch.VulkanBufferInfo, gfx asch.VulkanGfxPipelineInfo,
+) error {
+	clearValues := []vk.ClearValue{
+		vk.NewClearValue([]float32{0.098, 0.71, 0.996, 1}),
+	}
+	cmdBuffers := cmdCtx.GetCmdBuffers()
+	for i := range cmdBuffers {
+		if err := vk.Error(vk.BeginCommandBuffer(cmdBuffers[i], &vk.CommandBufferBeginInfo{
+			SType: vk.StructureTypeCommandBufferBeginInfo,
+		})); err != nil {
+			return err
+		}
+		vk.CmdBeginRenderPass(cmdBuffers[i], &vk.RenderPassBeginInfo{
+			SType:       vk.StructureTypeRenderPassBeginInfo,
+			RenderPass:  rasterPass.GetRenderPass(),
+			Framebuffer: s.Framebuffers[i],
+			RenderArea: vk.Rect2D{
+				Extent: s.DisplaySize,
+			},
+			ClearValueCount: 1,
+			PClearValues:    clearValues,
+		}, vk.SubpassContentsInline)
+		vk.CmdBindPipeline(cmdBuffers[i], vk.PipelineBindPointGraphics, gfx.GetPipeline())
+		vk.CmdBindVertexBuffers(cmdBuffers[i], 0, 1, []vk.Buffer{buffer.DefaultVertexBuffer()}, []vk.DeviceSize{0})
+		vk.CmdDraw(cmdBuffers[i], 3, 1, 0, 0)
+		vk.CmdEndRenderPass(cmdBuffers[i])
+		if err := vk.Error(vk.EndCommandBuffer(cmdBuffers[i])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func drawFrame(device vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
+	cmdCtx asch.VulkanCommandContext, fence vk.Fence, semaphore vk.Semaphore,
+) bool {
 	var nextIdx uint32
 
-	ret := vk.AcquireNextImage(device, s.DefaultSwapchain(), vk.MaxUint64, r.DefaultSemaphore(), vk.NullFence, &nextIdx)
+	ret := vk.AcquireNextImage(device, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
 	if ret == vk.Suboptimal || ret == vk.ErrorOutOfDate {
 		log.Println("AcquireNextImage returned Suboptimal or ErrorOutOfDate")
 	}
@@ -126,9 +171,9 @@ func drawFrame(device vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, r a
 	}
 
 	waitStages := []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)}
-	fences := []vk.Fence{r.DefaultFence()}
-	semaphores := []vk.Semaphore{r.DefaultSemaphore()}
-	cmdBuffers := r.GetCmdBuffers()
+	fences := []vk.Fence{fence}
+	semaphores := []vk.Semaphore{semaphore}
+	cmdBuffers := cmdCtx.GetCmdBuffers()
 
 	vk.ResetFences(device, 1, fences)
 	submitInfo := []vk.SubmitInfo{{
@@ -139,7 +184,7 @@ func drawFrame(device vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo, r a
 		CommandBufferCount: 1,
 		PCommandBuffers:    cmdBuffers[nextIdx:],
 	}}
-	if err := vk.Error(vk.QueueSubmit(queue, 1, submitInfo, r.DefaultFence())); err != nil {
+	if err := vk.Error(vk.QueueSubmit(queue, 1, submitInfo, fence)); err != nil {
 		log.Println("QueueSubmit:", err)
 		return false
 	}

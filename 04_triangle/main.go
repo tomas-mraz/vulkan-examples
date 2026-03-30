@@ -74,22 +74,21 @@ func main() {
 	}
 	cleanup.Add(&swapchain)
 
-	// Use vulkan-ash for renderer (render pass + command pool)
-	renderer, err := asch.NewRenderer(device.Device, swapchain.DisplayFormat)
+	rasterPass, err := asch.NewRasterPass(device.Device, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&rasterPass)
 
-	// Create framebuffers using vulkan-ash swapchain
-	if err := swapchain.CreateFramebuffers(renderer.RenderPass, vk.NullImageView); err != nil {
+	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), vk.NullImageView); err != nil {
 		log.Fatal(err)
 	}
 
-	// Allocate command buffers via framework
-	if err := renderer.CreateCommandBuffers(swapchain.DefaultSwapchainLen()); err != nil {
+	cmdCtx, err := asch.NewCommandContext(device.Device, 0, swapchain.DefaultSwapchainLen())
+	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&renderer)
+	cleanup.Add(&cmdCtx)
 
 	// Create vertex buffer with triangle data via framework
 	r := float32(0.5)
@@ -105,7 +104,7 @@ func main() {
 	cleanup.Add(&buffer)
 
 	// Create graphics pipeline with push constants via framework
-	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
+	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
 		VertShaderData: vertShaderCode,
 		FragShaderData: fragShaderCode,
 		PushConstantRanges: []vk.PushConstantRange{{
@@ -135,7 +134,7 @@ func main() {
 
 		angle := float32(time.Since(startTime).Seconds())
 
-		if !drawFrame(device.Device, device.Queue, swapchain, renderer, buffer,
+		if !drawFrame(device.Device, device.Queue, swapchain, rasterPass, cmdCtx, buffer,
 			sync.Fence, sync.Semaphore, gfx, angle) {
 			break
 		}
@@ -143,7 +142,7 @@ func main() {
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	r asch.VulkanRenderInfo, b asch.VulkanBufferInfo,
+	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext, b asch.VulkanBufferInfo,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.VulkanGfxPipelineInfo, angle float32,
 ) bool {
@@ -153,7 +152,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 		return false
 	}
 
-	cmd := r.GetCmdBuffers()[nextIdx]
+	cmd := cmdCtx.GetCmdBuffers()[nextIdx]
 	vk.ResetCommandBuffer(cmd, 0)
 
 	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{SType: vk.StructureTypeCommandBufferBeginInfo})
@@ -161,7 +160,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	clearValues := []vk.ClearValue{vk.NewClearValue([]float32{0, 0, 0, 1})}
 	vk.CmdBeginRenderPass(cmd, &vk.RenderPassBeginInfo{
 		SType:           vk.StructureTypeRenderPassBeginInfo,
-		RenderPass:      r.RenderPass,
+		RenderPass:      rasterPass.GetRenderPass(),
 		Framebuffer:     s.Framebuffers[nextIdx],
 		RenderArea:      vk.Rect2D{Extent: s.DisplaySize},
 		ClearValueCount: 1,
@@ -183,7 +182,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 		PWaitSemaphores:    []vk.Semaphore{semaphore},
 		PWaitDstStageMask:  []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)},
 		CommandBufferCount: 1,
-		PCommandBuffers:    r.GetCmdBuffers()[nextIdx:],
+		PCommandBuffers:    cmdCtx.GetCmdBuffers()[nextIdx:],
 	}}
 	if err := vk.Error(vk.QueueSubmit(queue, 1, submitInfo, fence)); err != nil {
 		log.Println("QueueSubmit:", err)

@@ -100,20 +100,20 @@ func main() {
 	}
 	cleanup.Add(&depth)
 
-	// Renderer with depth (render pass + command pool)
-	renderer, err := asch.NewRendererWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
+	rasterPass, err := asch.NewRasterPassWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&rasterPass)
 
-	// Framebuffers
-	if err := swapchain.CreateFramebuffers(renderer.RenderPass, depth.GetView()); err != nil {
+	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), depth.GetView()); err != nil {
 		log.Fatal(err)
 	}
-	if err := renderer.CreateCommandBuffers(swapchainLen); err != nil {
+	cmdCtx, err := asch.NewCommandContext(device.Device, 0, swapchainLen)
+	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&renderer)
+	cleanup.Add(&cmdCtx)
 
 	// Texture via framework
 	img, err := png.Decode(bytes.NewReader(gopherPng))
@@ -129,7 +129,7 @@ func main() {
 		log.Fatal(err)
 	}
 	cleanup.Add(&texture)
-	asch.TransitionImageLayout(device.Device, device.Queue, renderer.GetCmdPool(),
+	asch.TransitionImageLayout(device.Device, device.Queue, cmdCtx.GetCmdPool(),
 		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
 	// Uniform buffers (one per swapchain image) via framework
@@ -147,7 +147,7 @@ func main() {
 	cleanup.Add(&desc)
 
 	// Pipeline
-	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
+	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
 		VertShaderData:       vertShaderCode,
 		FragShaderData:       fragShaderCode,
 		VertexBindings:       []vk.VertexInputBindingDescription{},
@@ -187,7 +187,7 @@ func main() {
 		rotated.Dup(&modelMatrix)
 		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, lin.DegreesToRadians(elapsed))
 
-		if !drawCubeFrame(device.Device, device.Queue, swapchain, renderer,
+		if !drawCubeFrame(device.Device, device.Queue, swapchain, rasterPass, cmdCtx,
 			sync.Fence, sync.Semaphore,
 			gfx, desc.GetSets(),
 			&uniforms,
@@ -212,7 +212,7 @@ func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj
 }
 
 func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	r asch.VulkanRenderInfo,
+	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.VulkanGfxPipelineInfo, descSets []vk.DescriptorSet,
 	uniforms *asch.VulkanUniformBuffers,
@@ -227,7 +227,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	// Update uniform buffer for this frame
 	updateUniformBuffer(uniforms, nextIdx, proj, view, model)
 
-	cmd := r.GetCmdBuffers()[nextIdx]
+	cmd := cmdCtx.GetCmdBuffers()[nextIdx]
 	vk.ResetCommandBuffer(cmd, 0)
 	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{SType: vk.StructureTypeCommandBufferBeginInfo})
 
@@ -236,7 +236,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	clearValues[1].SetDepthStencil(1.0, 0)
 
 	vk.CmdBeginRenderPass(cmd, &vk.RenderPassBeginInfo{
-		SType: vk.StructureTypeRenderPassBeginInfo, RenderPass: r.RenderPass, Framebuffer: s.Framebuffers[nextIdx],
+		SType: vk.StructureTypeRenderPassBeginInfo, RenderPass: rasterPass.GetRenderPass(), Framebuffer: s.Framebuffers[nextIdx],
 		RenderArea:      vk.Rect2D{Extent: s.DisplaySize},
 		ClearValueCount: 2, PClearValues: clearValues,
 	}, vk.SubpassContentsInline)
@@ -251,7 +251,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	if err := vk.Error(vk.QueueSubmit(queue, 1, []vk.SubmitInfo{{
 		SType: vk.StructureTypeSubmitInfo, WaitSemaphoreCount: 1, PWaitSemaphores: []vk.Semaphore{semaphore},
 		PWaitDstStageMask:  []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)},
-		CommandBufferCount: 1, PCommandBuffers: r.GetCmdBuffers()[nextIdx:],
+		CommandBufferCount: 1, PCommandBuffers: cmdCtx.GetCmdBuffers()[nextIdx:],
 	}}, fence)); err != nil {
 		log.Println("QueueSubmit:", err)
 		return false

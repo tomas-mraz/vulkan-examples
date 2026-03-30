@@ -9,3 +9,5 @@ require (
 )
 
 require github.com/qmuntal/gltf v0.28.0 // indirect
+
+replace github.com/tomas-mraz/vulkan-ash => /home/tomas/git-osobni-github/vulkan-ash

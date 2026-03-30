@@ -99,17 +99,19 @@ func main() {
 	}
 	cleanup.Add(&depth)
 
-	renderer, err := asch.NewRendererWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
+	rasterPass, err := asch.NewRasterPassWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := swapchain.CreateFramebuffers(renderer.RenderPass, depth.GetView()); err != nil {
+	cleanup.Add(&rasterPass)
+	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), depth.GetView()); err != nil {
 		log.Fatal(err)
 	}
-	if err := renderer.CreateCommandBuffers(swapchainLen); err != nil {
+	cmdCtx, err := asch.NewCommandContext(device.Device, 0, swapchainLen)
+	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&renderer)
+	cleanup.Add(&cmdCtx)
 
 	// Vertex + index buffers
 	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, model.Vertices)
@@ -138,7 +140,7 @@ func main() {
 	cleanup.Add(&desc)
 
 	// Pipeline
-	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, renderer.RenderPass, asch.PipelineOptions{
+	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
 		VertShaderData: vertShaderCode,
 		FragShaderData: fragShaderCode,
 		VertexBindings: []vk.VertexInputBindingDescription{{
@@ -181,7 +183,7 @@ func main() {
 		rotated.Dup(&modelMatrix)
 		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, lin.DegreesToRadians(elapsed))
 
-		if !drawFrame(device.Device, device.Queue, swapchain, renderer,
+		if !drawFrame(device.Device, device.Queue, swapchain, rasterPass, cmdCtx,
 			sync.Fence, sync.Semaphore, gfx, desc.GetSets(), &uniforms,
 			vertexBuf, indexBuf,
 			&projMatrix, &viewMatrix, &modelMatrix) {
@@ -191,7 +193,7 @@ func main() {
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	r asch.VulkanRenderInfo,
+	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.VulkanGfxPipelineInfo, descSets []vk.DescriptorSet,
 	uniforms *asch.VulkanUniformBuffers,
@@ -211,7 +213,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	ubo := uboData{MVP: MVP, Model: *model}
 	uniforms.Update(nextIdx, ubo.Bytes())
 
-	cmd := r.GetCmdBuffers()[nextIdx]
+	cmd := cmdCtx.GetCmdBuffers()[nextIdx]
 	vk.ResetCommandBuffer(cmd, 0)
 	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{SType: vk.StructureTypeCommandBufferBeginInfo})
 
@@ -220,7 +222,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	clearValues[1].SetDepthStencil(1.0, 0)
 
 	vk.CmdBeginRenderPass(cmd, &vk.RenderPassBeginInfo{
-		SType: vk.StructureTypeRenderPassBeginInfo, RenderPass: r.RenderPass, Framebuffer: s.Framebuffers[nextIdx],
+		SType: vk.StructureTypeRenderPassBeginInfo, RenderPass: rasterPass.GetRenderPass(), Framebuffer: s.Framebuffers[nextIdx],
 		RenderArea: vk.Rect2D{Extent: s.DisplaySize}, ClearValueCount: 2, PClearValues: clearValues,
 	}, vk.SubpassContentsInline)
 
@@ -236,7 +238,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	if err := vk.Error(vk.QueueSubmit(queue, 1, []vk.SubmitInfo{{
 		SType: vk.StructureTypeSubmitInfo, WaitSemaphoreCount: 1, PWaitSemaphores: []vk.Semaphore{semaphore},
 		PWaitDstStageMask:  []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)},
-		CommandBufferCount: 1, PCommandBuffers: r.GetCmdBuffers()[nextIdx:],
+		CommandBufferCount: 1, PCommandBuffers: cmdCtx.GetCmdBuffers()[nextIdx:],
 	}}, fence)); err != nil {
 		log.Println("QueueSubmit:", err)
 		return false
