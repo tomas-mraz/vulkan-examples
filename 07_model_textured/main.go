@@ -1,20 +1,13 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
-	"image"
-	"image/draw"
-	_ "image/jpeg"
-	_ "image/png"
 	"log"
 	"runtime"
 	"time"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
-	"github.com/qmuntal/gltf"
-	"github.com/qmuntal/gltf/modeler"
 	vk "github.com/tomas-mraz/vulkan"
 	asch "github.com/tomas-mraz/vulkan-ash"
 	lin "github.com/xlab/linmath"
@@ -67,14 +60,11 @@ func main() {
 	defer window.Destroy()
 
 	// Load GLB model
-	doc, err := gltf.Open("DiffuseTransmissionTeacup.glb")
+	model, err := asch.LoadGLBModel("DiffuseTransmissionTeacup.glb")
 	if err != nil {
-		log.Fatal("gltf.Open:", err)
+		log.Fatal("LoadGLBModel:", err)
 	}
-
-	interleaved, indices := loadMeshes(doc)
-	texRGBA, texW, texH := loadBaseColorTexture(doc)
-	log.Printf("Loaded model: %d vertices, %d indices, texture %dx%d", len(interleaved)/8, len(indices), texW, texH)
+	log.Printf("Loaded model: %d vertices, %d indices, texture %dx%d", model.VertexCount(), model.IndexCount(), model.TextureWidth, model.TextureHeight)
 
 	// Vulkan init
 	asch.SetDebug(false)
@@ -114,17 +104,17 @@ func main() {
 	}
 
 	// Buffers
-	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, interleaved)
+	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, model.Vertices)
 	if err != nil {
 		log.Fatal(err)
 	}
-	indexBuf, err := asch.NewIndexBuffer32(device.Device, device.GpuDevice, indices)
+	indexBuf, err := asch.NewIndexBuffer32(device.Device, device.GpuDevice, model.Indices)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Texture
-	texture, err := asch.NewTexture(device.Device, device.GpuDevice, texW, texH, texRGBA)
+	texture, err := asch.NewTexture(device.Device, device.GpuDevice, model.TextureWidth, model.TextureHeight, model.TextureRGBA)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -218,74 +208,6 @@ func main() {
 	}
 	vk.DestroySurface(device.Instance, device.Surface, nil)
 	vk.DestroyInstance(device.Instance, nil)
-}
-
-// --- glTF loading ---
-
-func loadMeshes(doc *gltf.Document) (interleaved []float32, indices []uint32) {
-	for _, mesh := range doc.Meshes {
-		for _, prim := range mesh.Primitives {
-			positions, err := modeler.ReadPosition(doc, doc.Accessors[prim.Attributes[gltf.POSITION]], nil)
-			if err != nil {
-				log.Fatal("ReadPosition:", err)
-			}
-			normals, err := modeler.ReadNormal(doc, doc.Accessors[prim.Attributes[gltf.NORMAL]], nil)
-			if err != nil {
-				log.Fatal("ReadNormal:", err)
-			}
-			uvs, err := modeler.ReadTextureCoord(doc, doc.Accessors[prim.Attributes[gltf.TEXCOORD_0]], nil)
-			if err != nil {
-				log.Fatal("ReadTextureCoord:", err)
-			}
-
-			// Offset indices for merged vertex buffer
-			vertexOffset := uint32(len(interleaved) / 8)
-
-			primIndices, err := modeler.ReadIndices(doc, doc.Accessors[*prim.Indices], nil)
-			if err != nil {
-				log.Fatal("ReadIndices:", err)
-			}
-			for _, idx := range primIndices {
-				indices = append(indices, idx+vertexOffset)
-			}
-
-			// Interleave: pos3 + normal3 + uv2 = 8 floats
-			for i := range positions {
-				interleaved = append(interleaved,
-					positions[i][0], positions[i][1], positions[i][2],
-					normals[i][0], normals[i][1], normals[i][2],
-					uvs[i][0], uvs[i][1],
-				)
-			}
-		}
-	}
-	return
-}
-
-func loadBaseColorTexture(doc *gltf.Document) (rgba []byte, w, h uint32) {
-	// Use first material's baseColorTexture
-	mat := doc.Materials[0]
-	pbr := mat.PBRMetallicRoughness
-	if pbr == nil || pbr.BaseColorTexture == nil {
-		log.Fatal("no baseColorTexture in material")
-	}
-	texIdx := pbr.BaseColorTexture.Index
-	imgIdx := doc.Textures[texIdx].Source
-	imgDef := doc.Images[*imgIdx]
-
-	// Read image data from bufferView
-	bv := doc.BufferViews[*imgDef.BufferView]
-	buf := doc.Buffers[bv.Buffer]
-	imgData := buf.Data[bv.ByteOffset : bv.ByteOffset+bv.ByteLength]
-
-	img, _, err := image.Decode(bytes.NewReader(imgData))
-	if err != nil {
-		log.Fatal("decode texture image:", err)
-	}
-	rgbaImg := image.NewRGBA(img.Bounds())
-	draw.Draw(rgbaImg, rgbaImg.Bounds(), img, image.Point{}, draw.Src)
-
-	return rgbaImg.Pix, uint32(rgbaImg.Bounds().Dx()), uint32(rgbaImg.Bounds().Dy())
 }
 
 // --- Vulkan helpers ---
