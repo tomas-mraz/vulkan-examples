@@ -89,7 +89,18 @@ func main() {
 	}
 	cleanup.Add(&sync)
 
-	buffer, err := asch.NewBuffer(device.Device, device.GpuDevice)
+	vertices := []float32{
+		-1, -1, 0,
+		1, -1, 0,
+		0, 1, 0,
+	}
+	buffer, err := asch.NewBufferHostVisible(
+		device.Device,
+		device.GpuDevice,
+		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
+		vertices,
+		false,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -121,7 +132,7 @@ func main() {
 }
 
 func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext,
-	buffer asch.VulkanBufferInfo, gfx asch.VulkanGfxPipelineInfo,
+	buffer asch.VulkanBufferResource, gfx asch.VulkanGfxPipelineInfo,
 ) error {
 	clearValues := []vk.ClearValue{
 		vk.NewClearValue([]float32{0.098, 0.71, 0.996, 1}),
@@ -144,7 +155,7 @@ func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRast
 			PClearValues:    clearValues,
 		}, vk.SubpassContentsInline)
 		vk.CmdBindPipeline(cmdBuffers[i], vk.PipelineBindPointGraphics, gfx.GetPipeline())
-		vk.CmdBindVertexBuffers(cmdBuffers[i], 0, 1, []vk.Buffer{buffer.DefaultVertexBuffer()}, []vk.DeviceSize{0})
+		vk.CmdBindVertexBuffers(cmdBuffers[i], 0, 1, []vk.Buffer{buffer.Buffer}, []vk.DeviceSize{0})
 		vk.CmdDraw(cmdBuffers[i], 3, 1, 0, 0)
 		vk.CmdEndRenderPass(cmdBuffers[i])
 		if err := vk.Error(vk.EndCommandBuffer(cmdBuffers[i])); err != nil {

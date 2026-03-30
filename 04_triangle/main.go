@@ -97,7 +97,13 @@ func main() {
 		r * float32(math.Sin(2*math.Pi/3)), -r * float32(math.Cos(2*math.Pi/3)), 0, // bottom-left
 		r * float32(math.Sin(4*math.Pi/3)), -r * float32(math.Cos(4*math.Pi/3)), 0, // bottom-right
 	}
-	buffer, err := asch.NewBufferWithData(device.Device, device.GpuDevice, vertices)
+	buffer, err := asch.NewBufferHostVisible(
+		device.Device,
+		device.GpuDevice,
+		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
+		vertices,
+		false,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -142,7 +148,7 @@ func main() {
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext, b asch.VulkanBufferInfo,
+	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext, b asch.VulkanBufferResource,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.VulkanGfxPipelineInfo, angle float32,
 ) bool {
@@ -169,7 +175,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 
 	vk.CmdBindPipeline(cmd, vk.PipelineBindPointGraphics, gfx.GetPipeline())
 	vk.CmdPushConstants(cmd, gfx.GetLayout(), vk.ShaderStageFlags(vk.ShaderStageVertexBit), 0, 4, unsafe.Pointer(&angle))
-	vk.CmdBindVertexBuffers(cmd, 0, 1, []vk.Buffer{b.DefaultVertexBuffer()}, []vk.DeviceSize{0})
+	vk.CmdBindVertexBuffers(cmd, 0, 1, []vk.Buffer{b.Buffer}, []vk.DeviceSize{0})
 	vk.CmdDraw(cmd, 3, 1, 0, 0)
 	vk.CmdEndRenderPass(cmd)
 	vk.EndCommandBuffer(cmd)

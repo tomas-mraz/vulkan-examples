@@ -114,12 +114,24 @@ func main() {
 	cleanup.Add(&cmdCtx)
 
 	// Vertex + index buffers
-	vertexBuf, err := asch.NewBufferWithData(device.Device, device.GpuDevice, model.Vertices)
+	vertexBuf, err := asch.NewBufferHostVisible(
+		device.Device,
+		device.GpuDevice,
+		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
+		model.Vertices,
+		false,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&vertexBuf)
-	indexBuf, err := asch.NewIndexBuffer32(device.Device, device.GpuDevice, model.Indices)
+	indexBuf, err := asch.NewBufferHostVisible(
+		device.Device,
+		device.GpuDevice,
+		vk.BufferUsageFlags(vk.BufferUsageIndexBufferBit),
+		model.Indices,
+		false,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -185,7 +197,7 @@ func main() {
 
 		if !drawFrame(device.Device, device.Queue, swapchain, rasterPass, cmdCtx,
 			sync.Fence, sync.Semaphore, gfx, desc.GetSets(), &uniforms,
-			vertexBuf, indexBuf,
+			vertexBuf, indexBuf, uint32(len(model.Indices)),
 			&projMatrix, &viewMatrix, &modelMatrix) {
 			break
 		}
@@ -197,7 +209,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.VulkanGfxPipelineInfo, descSets []vk.DescriptorSet,
 	uniforms *asch.VulkanUniformBuffers,
-	vertexBuf asch.VulkanBufferInfo, indexBuf asch.VulkanIndexBufferInfo,
+	vertexBuf asch.VulkanBufferResource, indexBuf asch.VulkanBufferResource, indexCount uint32,
 	proj, view, model *lin.Mat4x4,
 ) bool {
 	var nextIdx uint32
@@ -228,9 +240,9 @@ func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 
 	vk.CmdBindPipeline(cmd, vk.PipelineBindPointGraphics, gfx.GetPipeline())
 	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointGraphics, gfx.GetLayout(), 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
-	vk.CmdBindVertexBuffers(cmd, 0, 1, []vk.Buffer{vertexBuf.DefaultVertexBuffer()}, []vk.DeviceSize{0})
-	vk.CmdBindIndexBuffer(cmd, indexBuf.GetBuffer(), 0, vk.IndexTypeUint32)
-	vk.CmdDrawIndexed(cmd, indexBuf.GetCount(), 1, 0, 0, 0)
+	vk.CmdBindVertexBuffers(cmd, 0, 1, []vk.Buffer{vertexBuf.Buffer}, []vk.DeviceSize{0})
+	vk.CmdBindIndexBuffer(cmd, indexBuf.Buffer, 0, vk.IndexTypeUint32)
+	vk.CmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0)
 	vk.CmdEndRenderPass(cmd)
 	vk.EndCommandBuffer(cmd)
 
