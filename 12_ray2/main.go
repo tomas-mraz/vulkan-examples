@@ -1,16 +1,9 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
-	"fmt"
-	"image"
-	"image/draw"
-	_ "image/jpeg"
-	_ "image/png"
 	"log"
 	"math"
-	"os"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -69,14 +62,33 @@ type primitiveData struct {
 	occlusionTex  int32
 }
 
-
 // modelData owns primitive buffers plus a single multi-geometry BLAS for the model.
 type modelData struct {
+	device      vk.Device
 	primitives  []primitiveData
 	geometryBuf ash.VulkanBufferResource
 	blasBuf     ash.VulkanBufferResource
 	blas        vk.AccelerationStructure
 	textures    []ash.VulkanImageResource
+}
+
+func (m *modelData) Destroy() {
+	if m == nil {
+		return
+	}
+	for i := range m.primitives {
+		m.primitives[i].indexBuf.Destroy()
+		m.primitives[i].vertexBuf.Destroy()
+	}
+	for i := range m.textures {
+		m.textures[i].Destroy()
+	}
+	m.geometryBuf.Destroy()
+	if m.blas != vk.NullAccelerationStructure {
+		vk.DestroyAccelerationStructure(m.device, m.blas, nil)
+		m.blas = vk.NullAccelerationStructure
+	}
+	m.blasBuf.Destroy()
 }
 
 type geometryNode struct {
@@ -186,24 +198,7 @@ func main() {
 	// --- Load glTF model ---
 	model := loadGLTFModel(dev, gpu, queue, &cmdCtx, "assets/FlightHelmet/FlightHelmet.gltf")
 	log.Printf("Loaded %d primitives into one BLAS", len(model.primitives))
-	cleanup.Add(ash.DestroyerFunc(func() {
-		for i := range model.primitives {
-			model.primitives[i].indexBuf.Destroy()
-			model.primitives[i].vertexBuf.Destroy()
-		}
-	}))
-	cleanup.Add(ash.DestroyerFunc(func() {
-		for i := range model.textures {
-			model.textures[i].Destroy()
-		}
-	}))
-	cleanup.Add(ash.DestroyerFunc(func() {
-		model.geometryBuf.Destroy()
-	}))
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyAccelerationStructure(dev, model.blas, nil)
-		model.blasBuf.Destroy()
-	}))
+	cleanup.Add(&model)
 
 	// --- Build TLAS with one instance for the model BLAS ---
 	tlasBuf, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.blas)
@@ -295,7 +290,10 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 		log.Fatalf("gltf scene index %d out of range", activeScene)
 	}
 
-	textures := loadGLTFTextures(dev, gpu, queue, cmdCtx, doc, filepath.Dir(path))
+	textures, err := ash.LoadGLTFTextures(dev, gpu, queue, cmdCtx, doc, filepath.Dir(path))
+	if err != nil {
+		log.Fatal(err)
+	}
 	var visitNode func(nodeIndex int, parentTransform [16]float32)
 	visitNode = func(nodeIndex int, parentTransform [16]float32) {
 		node := doc.Nodes[nodeIndex]
@@ -380,6 +378,7 @@ func loadGLTFModel(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx 
 	blasBuf, blas := buildBLAS(dev, gpu, queue, cmdCtx, prims)
 	geometryBuf := createGeometryNodesBuffer(dev, gpu, prims)
 	return modelData{
+		device:      dev,
 		primitives:  prims,
 		geometryBuf: geometryBuf,
 		blasBuf:     blasBuf,
@@ -735,208 +734,6 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	scratchBuf.Destroy()
 	instanceBuf.Destroy()
 	return asBuf, as
-}
-
-func createTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, width, height uint32, pixels []byte, samplerInfo vk.SamplerCreateInfo) ash.VulkanImageResource {
-	stagingBuf := createBufferWithAddress(dev, gpu, vk.BufferUsageFlags(vk.BufferUsageTransferSrcBit), pixels)
-
-	var img vk.Image
-	if err := vk.Error(vk.CreateImage(dev, &vk.ImageCreateInfo{
-		SType:     vk.StructureTypeImageCreateInfo,
-		ImageType: vk.ImageType2d,
-		Format:    vk.FormatR8g8b8a8Unorm,
-		Extent:    vk.Extent3D{Width: width, Height: height, Depth: 1},
-		MipLevels: 1, ArrayLayers: 1, Samples: vk.SampleCount1Bit,
-		Tiling: vk.ImageTilingOptimal,
-		Usage:  vk.ImageUsageFlags(vk.ImageUsageTransferDstBit | vk.ImageUsageSampledBit),
-	}, nil, &img)); err != nil {
-		log.Fatal("CreateImage (texture):", err)
-	}
-
-	var memReqs vk.MemoryRequirements
-	vk.GetImageMemoryRequirements(dev, img, &memReqs)
-	memReqs.Deref()
-	memIdx, _ := vk.FindMemoryTypeIndex(gpu, memReqs.MemoryTypeBits, vk.MemoryPropertyDeviceLocalBit)
-	var mem vk.DeviceMemory
-	if err := vk.Error(vk.AllocateMemory(dev, &vk.MemoryAllocateInfo{
-		SType:           vk.StructureTypeMemoryAllocateInfo,
-		AllocationSize:  memReqs.Size,
-		MemoryTypeIndex: memIdx,
-	}, nil, &mem)); err != nil {
-		log.Fatal("AllocateMemory (texture):", err)
-	}
-	vk.BindImageMemory(dev, img, mem, 0)
-
-	cmd, err := cmdCtx.BeginOneTime()
-	if err != nil {
-		log.Fatal("BeginOneTime:", err)
-	}
-	rangeColor := vk.ImageSubresourceRange{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1}
-	vk.CmdPipelineBarrier(cmd,
-		vk.PipelineStageFlags(vk.PipelineStageTopOfPipeBit), vk.PipelineStageFlags(vk.PipelineStageTransferBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType:     vk.StructureTypeImageMemoryBarrier,
-			OldLayout: vk.ImageLayoutUndefined, NewLayout: vk.ImageLayoutTransferDstOptimal,
-			Image: img, SubresourceRange: rangeColor,
-			DstAccessMask:       vk.AccessFlags(vk.AccessTransferWriteBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
-	vk.CmdCopyBufferToImage(cmd, stagingBuf.Buffer, img, vk.ImageLayoutTransferDstOptimal, 1, []vk.BufferImageCopy{{
-		ImageSubresource: vk.ImageSubresourceLayers{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LayerCount: 1},
-		ImageExtent:      vk.Extent3D{Width: width, Height: height, Depth: 1},
-	}})
-	vk.CmdPipelineBarrier(cmd,
-		vk.PipelineStageFlags(vk.PipelineStageTransferBit), vk.PipelineStageFlags(vk.PipelineStageFragmentShaderBit|vk.PipelineStageRayTracingShaderBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType:     vk.StructureTypeImageMemoryBarrier,
-			OldLayout: vk.ImageLayoutTransferDstOptimal, NewLayout: vk.ImageLayoutShaderReadOnlyOptimal,
-			Image: img, SubresourceRange: rangeColor,
-			SrcAccessMask: vk.AccessFlags(vk.AccessTransferWriteBit), DstAccessMask: vk.AccessFlags(vk.AccessShaderReadBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
-	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
-		log.Fatal("EndOneTime:", err)
-	}
-
-	stagingBuf.Destroy()
-
-	var view vk.ImageView
-	if err := vk.Error(vk.CreateImageView(dev, &vk.ImageViewCreateInfo{
-		SType:            vk.StructureTypeImageViewCreateInfo,
-		Image:            img,
-		ViewType:         vk.ImageViewType2d,
-		Format:           vk.FormatR8g8b8a8Unorm,
-		SubresourceRange: rangeColor,
-	}, nil, &view)); err != nil {
-		log.Fatal("CreateImageView (texture):", err)
-	}
-
-	var sampler vk.Sampler
-	if err := vk.Error(vk.CreateSampler(dev, &samplerInfo, nil, &sampler)); err != nil {
-		log.Fatal("CreateSampler (texture):", err)
-	}
-
-	return ash.NewImageResourceFromHandles(dev, img, mem, view, sampler, vk.FormatR8g8b8a8Unorm)
-}
-
-func defaultSamplerCreateInfo() vk.SamplerCreateInfo {
-	return vk.SamplerCreateInfo{
-		SType:        vk.StructureTypeSamplerCreateInfo,
-		MagFilter:    vk.FilterLinear,
-		MinFilter:    vk.FilterLinear,
-		MipmapMode:   vk.SamplerMipmapModeLinear,
-		AddressModeU: vk.SamplerAddressModeRepeat,
-		AddressModeV: vk.SamplerAddressModeRepeat,
-		AddressModeW: vk.SamplerAddressModeRepeat,
-		MaxLod:       0,
-		BorderColor:  vk.BorderColorIntOpaqueWhite,
-	}
-}
-
-func createDummyTexture(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext) ash.VulkanImageResource {
-	return createTexture(dev, gpu, queue, cmdCtx, 1, 1, []byte{255, 255, 255, 255}, defaultSamplerCreateInfo())
-}
-
-func loadGLTFTextures(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, doc *gltf.Document, baseDir string) []ash.VulkanImageResource {
-	textures := make([]ash.VulkanImageResource, 0, len(doc.Textures)+1)
-	textures = append(textures, createDummyTexture(dev, gpu, queue, cmdCtx))
-	for i, tex := range doc.Textures {
-		if tex == nil || tex.Source == nil {
-			log.Printf("Texture %d has no source, using fallback texture", i)
-			textures = append(textures, createDummyTexture(dev, gpu, queue, cmdCtx))
-			continue
-		}
-
-		pixels, width, height, err := decodeGLTFTexture(doc, baseDir, *tex.Source)
-		if err != nil {
-			log.Fatalf("decodeGLTFTexture %d: %v", i, err)
-		}
-		textures = append(textures, createTexture(dev, gpu, queue, cmdCtx, width, height, pixels, samplerCreateInfoForTexture(doc, tex)))
-	}
-	return textures
-}
-
-func decodeGLTFTexture(doc *gltf.Document, baseDir string, imageIndex int) ([]byte, uint32, uint32, error) {
-	if imageIndex < 0 || imageIndex >= len(doc.Images) {
-		return nil, 0, 0, fmt.Errorf("image index %d out of range", imageIndex)
-	}
-	imageDef := doc.Images[imageIndex]
-	if imageDef == nil {
-		return nil, 0, 0, fmt.Errorf("image %d is nil", imageIndex)
-	}
-
-	var raw []byte
-	var err error
-	switch {
-	case imageDef.IsEmbeddedResource():
-		raw, err = imageDef.MarshalData()
-	case imageDef.URI != "":
-		raw, err = os.ReadFile(filepath.Join(baseDir, imageDef.URI))
-	case imageDef.BufferView != nil:
-		return nil, 0, 0, fmt.Errorf("bufferView-backed images are not supported")
-	default:
-		return nil, 0, 0, fmt.Errorf("image %d has no data source", imageIndex)
-	}
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	decoded, _, err := image.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	bounds := decoded.Bounds()
-	rgba := image.NewRGBA(bounds)
-	draw.Draw(rgba, bounds, decoded, bounds.Min, draw.Src)
-	return rgba.Pix, uint32(bounds.Dx()), uint32(bounds.Dy()), nil
-}
-
-func samplerCreateInfoForTexture(doc *gltf.Document, tex *gltf.Texture) vk.SamplerCreateInfo {
-	info := defaultSamplerCreateInfo()
-	if tex == nil || tex.Sampler == nil || *tex.Sampler < 0 || *tex.Sampler >= len(doc.Samplers) {
-		return info
-	}
-	sampler := doc.Samplers[*tex.Sampler]
-	if sampler == nil {
-		return info
-	}
-
-	info.MagFilter = magFilterFromGLTF(sampler.MagFilter)
-	info.MinFilter, info.MipmapMode = minFilterFromGLTF(sampler.MinFilter)
-	info.AddressModeU = addressModeFromGLTF(sampler.WrapS)
-	info.AddressModeV = addressModeFromGLTF(sampler.WrapT)
-	return info
-}
-
-func magFilterFromGLTF(filter gltf.MagFilter) vk.Filter {
-	switch filter {
-	case gltf.MagNearest:
-		return vk.FilterNearest
-	default:
-		return vk.FilterLinear
-	}
-}
-
-func minFilterFromGLTF(filter gltf.MinFilter) (vk.Filter, vk.SamplerMipmapMode) {
-	switch filter {
-	case gltf.MinNearest, gltf.MinNearestMipMapNearest, gltf.MinNearestMipMapLinear:
-		return vk.FilterNearest, vk.SamplerMipmapModeNearest
-	case gltf.MinLinearMipMapNearest:
-		return vk.FilterLinear, vk.SamplerMipmapModeNearest
-	default:
-		return vk.FilterLinear, vk.SamplerMipmapModeLinear
-	}
-}
-
-func addressModeFromGLTF(mode gltf.WrappingMode) vk.SamplerAddressMode {
-	switch mode {
-	case gltf.WrapClampToEdge:
-		return vk.SamplerAddressModeClampToEdge
-	case gltf.WrapMirroredRepeat:
-		return vk.SamplerAddressModeMirroredRepeat
-	default:
-		return vk.SamplerAddressModeRepeat
-	}
 }
 
 func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []ash.VulkanImageResource, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
