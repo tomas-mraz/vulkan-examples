@@ -478,7 +478,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx 
 	rtPipeline *ash.PipelineRtInfo,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
 	storageImage vk.Image,
-	sbt *ash.VulkanSBT,
+	sbt *ash.ShaderBindingTable,
 	proj, view *ash.Mat4x4,
 ) bool {
 	var nextIdx uint32
