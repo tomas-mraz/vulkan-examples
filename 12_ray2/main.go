@@ -178,13 +178,21 @@ func main() {
 		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
 	}))
 	// --- RT Pipeline ---
-	pipelineLayout, pipeline := createRTPipeline(dev, descLayout)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyPipeline(dev, pipeline, nil)
-		vk.DestroyPipelineLayout(dev, pipelineLayout, nil)
-	}))
+	rtPipeline, err := ash.NewRTPipeline(dev, ash.RTPipelineOptions{
+		Groups: []ash.RTShaderGroup{
+			{RaygenShader: raygenShaderCode},
+			{MissShader: missShaderCode},
+			{MissShader: shadowMissShaderCode},
+			{ClosestHitShader: closestHitShaderCode, AnyHitShader: anyHitShaderCode},
+		},
+		DescriptorSetLayouts: []vk.DescriptorSetLayout{descLayout},
+	})
+	if err != nil {
+		log.Fatal("NewRTPipeline:", err)
+	}
+	cleanup.Add(&rtPipeline)
 	// --- Shader Binding Table ---
-	sbt, err := ash.NewSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
+	sbt, err := ash.NewSBT(dev, gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
 	if err != nil {
 		log.Fatal("NewSBT:", err)
 	}
@@ -215,7 +223,7 @@ func main() {
 		frameCounter = 0 // reset accumulation — camera changed
 
 		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
-			pipeline, pipelineLayout, descSets, &uniforms,
+			&rtPipeline, descSets, &uniforms,
 			storageImg.GetImage(), &sbt,
 			&projMatrix, &rotatedView) {
 			break
@@ -461,67 +469,13 @@ func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStruc
 	return layout, pool, sets
 }
 
-func createRTPipeline(dev vk.Device, descLayout vk.DescriptorSetLayout) (vk.PipelineLayout, vk.Pipeline) {
-	var pipelineLayout vk.PipelineLayout
-	vk.CreatePipelineLayout(dev, &vk.PipelineLayoutCreateInfo{
-		SType: vk.StructureTypePipelineLayoutCreateInfo, SetLayoutCount: 1,
-		PSetLayouts: []vk.DescriptorSetLayout{descLayout},
-	}, nil, &pipelineLayout)
-
-	raygenModule, _ := ash.LoadShaderFromBytes(dev, raygenShaderCode)
-	missModule, _ := ash.LoadShaderFromBytes(dev, missShaderCode)
-	shadowMissModule, _ := ash.LoadShaderFromBytes(dev, shadowMissShaderCode)
-	closestHitModule, _ := ash.LoadShaderFromBytes(dev, closestHitShaderCode)
-	anyHitModule, _ := ash.LoadShaderFromBytes(dev, anyHitShaderCode)
-
-	stages := []vk.PipelineShaderStageCreateInfo{
-		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageRaygenBit), Module: raygenModule, PName: []byte("main\x00")},
-		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageMissBit), Module: missModule, PName: []byte("main\x00")},
-		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageMissBit), Module: shadowMissModule, PName: []byte("main\x00")},
-		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageClosestHitBit), Module: closestHitModule, PName: []byte("main\x00")},
-		{SType: vk.StructureTypePipelineShaderStageCreateInfo, Stage: vk.ShaderStageFlagBits(vk.ShaderStageAnyHitBit), Module: anyHitModule, PName: []byte("main\x00")},
-	}
-	groups := []vk.RayTracingShaderGroupCreateInfo{
-		// Raygen
-		{SType: vk.StructureTypeRayTracingShaderGroupCreateInfo, Type: vk.RayTracingShaderGroupTypeGeneral,
-			GeneralShader: 0, ClosestHitShader: vk.ShaderUnused, AnyHitShader: vk.ShaderUnused, IntersectionShader: vk.ShaderUnused},
-		// Miss
-		{SType: vk.StructureTypeRayTracingShaderGroupCreateInfo, Type: vk.RayTracingShaderGroupTypeGeneral,
-			GeneralShader: 1, ClosestHitShader: vk.ShaderUnused, AnyHitShader: vk.ShaderUnused, IntersectionShader: vk.ShaderUnused},
-		// Shadow miss
-		{SType: vk.StructureTypeRayTracingShaderGroupCreateInfo, Type: vk.RayTracingShaderGroupTypeGeneral,
-			GeneralShader: 2, ClosestHitShader: vk.ShaderUnused, AnyHitShader: vk.ShaderUnused, IntersectionShader: vk.ShaderUnused},
-		// Closest hit + any hit
-		{SType: vk.StructureTypeRayTracingShaderGroupCreateInfo, Type: vk.RayTracingShaderGroupTypeTrianglesHitGroup,
-			GeneralShader: vk.ShaderUnused, ClosestHitShader: 3, AnyHitShader: 4, IntersectionShader: vk.ShaderUnused},
-	}
-
-	createInfo := vk.RayTracingPipelineCreateInfo{
-		SType:      vk.StructureTypeRayTracingPipelineCreateInfo,
-		StageCount: uint32(len(stages)), PStages: stages,
-		GroupCount: uint32(len(groups)), PGroups: groups,
-		MaxPipelineRayRecursionDepth: 1, Layout: pipelineLayout,
-	}
-	var pip vk.Pipeline
-	if err := vk.Error(vk.CreateRayTracingPipelines(dev, vk.DeferredOperation(vk.NullHandle), vk.NullPipelineCache, 1, &createInfo, nil, &pip)); err != nil {
-		log.Fatal("CreateRayTracingPipelines:", err)
-	}
-
-	vk.DestroyShaderModule(dev, raygenModule, nil)
-	vk.DestroyShaderModule(dev, missModule, nil)
-	vk.DestroyShaderModule(dev, shadowMissModule, nil)
-	vk.DestroyShaderModule(dev, closestHitModule, nil)
-	vk.DestroyShaderModule(dev, anyHitModule, nil)
-	return pipelineLayout, pip
-}
-
 func alignUp(size, alignment uint32) uint32 {
 	return (size + alignment - 1) &^ (alignment - 1)
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.VulkanCommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
-	pipeline vk.Pipeline, pipelineLayout vk.PipelineLayout,
+	rtPipeline *ash.PipelineRtInfo,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
 	storageImage vk.Image,
 	sbt *ash.VulkanSBT,
@@ -546,8 +500,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx 
 	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{SType: vk.StructureTypeCommandBufferBeginInfo})
 
 	// Bind RT pipeline and descriptors
-	vk.CmdBindPipeline(cmd, vk.PipelineBindPointRayTracing, pipeline)
-	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointRayTracing, pipelineLayout, 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
+	vk.CmdBindPipeline(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetPipeline())
+	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetLayout(), 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
 
 	// Trace rays
 	vk.CmdTraceRays(cmd, &sbt.Raygen, &sbt.Miss, &sbt.Hit, &sbt.Callable, windowWidth, windowHeight, 1)
