@@ -171,6 +171,7 @@ func main() {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
+	rtx := ash.NewRaytracingContext(dev, gpu, queue, &cmdCtx)
 
 	// --- Load glTF model ---
 	model, err := ash.LoadGLTFModel(dev, gpu, queue, &cmdCtx, "assets/FlightHelmet/FlightHelmet.gltf")
@@ -181,7 +182,17 @@ func main() {
 	cleanup.Add(&model)
 
 	// --- Build TLAS with one instance for the model BLAS ---
-	tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.BLAS)
+	tlas, err := rtx.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
+		Transform:           [12]float32{1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0},
+		InstanceCustomIndex: 0,
+		Mask:                0xFF,
+		SBTRecordOffset:     0,
+		Flags:               vk.GeometryInstanceFlags(vk.GeometryInstanceTriangleFacingCullDisableBit),
+		BLAS:                &model.BLAS,
+	}}, vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit))
+	if err != nil {
+		log.Fatal("NewTopLevelAccelerationStructure:", err)
+	}
 	cleanup.Add(&tlas)
 
 	// --- Create storage image ---
@@ -301,123 +312,6 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 }
 
 // --- Helper functions ---
-
-// setDeviceAddressConst writes a DeviceAddress into a DeviceOrHostAddressConst byte array
-func setDeviceAddressConst(addr *vk.DeviceOrHostAddressConst, da vk.DeviceAddress) {
-	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
-}
-
-// setDeviceAddress writes a DeviceAddress into a DeviceOrHostAddress byte array
-func setDeviceAddress(addr *vk.DeviceOrHostAddress, da vk.DeviceAddress) {
-	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
-}
-
-// setGeometryInstances writes AccelerationStructureGeometryInstancesData into the union
-func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.AccelerationStructureGeometryInstancesData) {
-	cInst, _ := inst.PassRef()
-	src := unsafe.Slice((*byte)(unsafe.Pointer(cInst)), len(*data))
-	copy((*data)[:], src)
-}
-
-// buildTLAS creates a TLAS with one instance that references the model BLAS.
-func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.CommandContext, blas ash.AccelerationStructure) ash.AccelerationStructure {
-	instanceData := make([]byte, 64)
-	transform := [12]float32{1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0}
-	blasAddr := blas.GetDeviceAddress()
-
-	copy(instanceData[:48], unsafe.Slice((*byte)(unsafe.Pointer(&transform[0])), 48))
-	instanceData[48] = 0
-	instanceData[49] = 0
-	instanceData[50] = 0
-	instanceData[51] = 0xFF
-	instanceData[52] = 0
-	instanceData[53] = 0
-	instanceData[54] = 0
-	instanceData[55] = 0x01 // VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR
-	*(*uint64)(unsafe.Pointer(&instanceData[56])) = uint64(blasAddr)
-
-	instanceBuf, err := ash.NewBufferHostVisible(dev, gpu, instanceData, true, vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit))
-	if err != nil {
-		log.Fatal(err)
-	}
-	instanceAddr := instanceBuf.DeviceAddress
-
-	var instancesData vk.AccelerationStructureGeometryInstancesData
-	instancesData.SType = vk.StructureTypeAccelerationStructureGeometryInstancesData
-	setDeviceAddressConst(&instancesData.Data, instanceAddr)
-
-	var geometry vk.AccelerationStructureGeometry
-	geometry.SType = vk.StructureTypeAccelerationStructureGeometry
-	geometry.GeometryType = vk.GeometryTypeInstances
-	geometry.Flags = vk.GeometryFlags(vk.GeometryOpaqueBit)
-	setGeometryInstances(&geometry.Geometry, &instancesData)
-
-	buildInfo := vk.AccelerationStructureBuildGeometryInfo{
-		SType:         vk.StructureTypeAccelerationStructureBuildGeometryInfo,
-		Type:          vk.AccelerationStructureTypeTopLevel,
-		Flags:         vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit),
-		GeometryCount: 1,
-		PGeometries:   []vk.AccelerationStructureGeometry{geometry},
-	}
-
-	primitiveCount := uint32(1)
-	var sizeInfo vk.AccelerationStructureBuildSizesInfo
-	sizeInfo.SType = vk.StructureTypeAccelerationStructureBuildSizesInfo
-	vk.GetAccelerationStructureBuildSizes(dev, vk.AccelerationStructureBuildTypeDevice, &buildInfo, &primitiveCount, &sizeInfo)
-	sizeInfo.Deref()
-	log.Printf("TLAS size: AS=%d, scratch=%d (instances=1)", sizeInfo.AccelerationStructureSize, sizeInfo.BuildScratchSize)
-
-	asBuf, err := ash.NewBufferDeviceLocal(dev, gpu, uint64(sizeInfo.AccelerationStructureSize), true,
-		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var as vk.AccelerationStructure
-	if err := vk.Error(vk.CreateAccelerationStructure(dev, &vk.AccelerationStructureCreateInfo{
-		SType: vk.StructureTypeAccelerationStructureCreateInfo, Buffer: asBuf.Buffer,
-		Size: sizeInfo.AccelerationStructureSize, Type: vk.AccelerationStructureTypeTopLevel,
-	}, nil, &as)); err != nil {
-		log.Fatal("CreateAccelerationStructure (TLAS):", err)
-	}
-
-	scratchBuf, err := ash.NewBufferDeviceLocal(dev, gpu, uint64(sizeInfo.BuildScratchSize), true,
-		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit))
-	if err != nil {
-		log.Fatal(err)
-	}
-	scratchAddr := scratchBuf.DeviceAddress
-
-	buildInfo2 := vk.AccelerationStructureBuildGeometryInfo{
-		SType:                    vk.StructureTypeAccelerationStructureBuildGeometryInfo,
-		Type:                     vk.AccelerationStructureTypeTopLevel,
-		Flags:                    vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit),
-		Mode:                     vk.BuildAccelerationStructureModeBuild,
-		DstAccelerationStructure: as,
-		GeometryCount:            1,
-		PGeometries:              []vk.AccelerationStructureGeometry{geometry},
-	}
-	setDeviceAddress(&buildInfo2.ScratchData, scratchAddr)
-
-	rangeInfos := []vk.AccelerationStructureBuildRangeInfo{{PrimitiveCount: primitiveCount}}
-
-	cmd, err := cmdCtx.BeginOneTime()
-	if err != nil {
-		log.Fatal("BeginOneTime:", err)
-	}
-	vk.CmdBuildAccelerationStructures(cmd, 1, &buildInfo2, [][]vk.AccelerationStructureBuildRangeInfo{rangeInfos})
-	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
-		log.Fatal("EndOneTime:", err)
-	}
-
-	scratchBuf.Destroy()
-	instanceBuf.Destroy()
-	return ash.AccelerationStructure{
-		AccelerationStructure: as,
-		Buffer:                asBuf,
-		Type:                  vk.AccelerationStructureTypeTopLevel,
-	}
-}
 
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
