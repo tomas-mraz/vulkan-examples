@@ -521,55 +521,8 @@ func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx 
 	// Trace rays
 	vk.CmdTraceRays(cmd, &sbt.Raygen, &sbt.Miss, &sbt.Hit, &sbt.Callable, windowWidth, windowHeight, 1)
 
-	// Copy storage image to swapchain image
-	subresourceRange := vk.ImageSubresourceRange{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1}
-
-	// Get swapchain images
-	var imgCount uint32
-	vk.GetSwapchainImages(dev, s.DefaultSwapchain(), &imgCount, nil)
-	swapImages := make([]vk.Image, imgCount)
-	vk.GetSwapchainImages(dev, s.DefaultSwapchain(), &imgCount, swapImages)
-
-	// Transition swapchain image to transfer dst
-	vk.CmdPipelineBarrier(cmd, vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit), vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType: vk.StructureTypeImageMemoryBarrier, OldLayout: vk.ImageLayoutUndefined, NewLayout: vk.ImageLayoutTransferDstOptimal,
-			Image: swapImages[nextIdx], SubresourceRange: subresourceRange, DstAccessMask: vk.AccessFlags(vk.AccessTransferWriteBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
-	// Transition storage image to transfer src
-	vk.CmdPipelineBarrier(cmd, vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit), vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType: vk.StructureTypeImageMemoryBarrier, OldLayout: vk.ImageLayoutGeneral, NewLayout: vk.ImageLayoutTransferSrcOptimal,
-			Image: storageImage, SubresourceRange: subresourceRange,
-			SrcAccessMask: vk.AccessFlags(vk.AccessShaderWriteBit), DstAccessMask: vk.AccessFlags(vk.AccessTransferReadBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
-
-	// Copy
-	vk.CmdCopyImage(cmd, storageImage, vk.ImageLayoutTransferSrcOptimal, swapImages[nextIdx], vk.ImageLayoutTransferDstOptimal,
-		1, []vk.ImageCopy{{
-			SrcSubresource: vk.ImageSubresourceLayers{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LayerCount: 1},
-			DstSubresource: vk.ImageSubresourceLayers{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LayerCount: 1},
-			Extent:         vk.Extent3D{Width: windowWidth, Height: windowHeight, Depth: 1},
-		}})
-
-	// Transition swapchain image to present
-	vk.CmdPipelineBarrier(cmd, vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit), vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType: vk.StructureTypeImageMemoryBarrier, OldLayout: vk.ImageLayoutTransferDstOptimal, NewLayout: vk.ImageLayoutPresentSrc,
-			Image: swapImages[nextIdx], SubresourceRange: subresourceRange,
-			SrcAccessMask:       vk.AccessFlags(vk.AccessTransferWriteBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
-	// Transition storage image back to general
-	vk.CmdPipelineBarrier(cmd, vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit), vk.PipelineStageFlags(vk.PipelineStageAllCommandsBit),
-		0, 0, nil, 0, nil, 1, []vk.ImageMemoryBarrier{{
-			SType: vk.StructureTypeImageMemoryBarrier, OldLayout: vk.ImageLayoutTransferSrcOptimal, NewLayout: vk.ImageLayoutGeneral,
-			Image: storageImage, SubresourceRange: subresourceRange,
-			SrcAccessMask: vk.AccessFlags(vk.AccessTransferReadBit), DstAccessMask: vk.AccessFlags(vk.AccessShaderWriteBit),
-			SrcQueueFamilyIndex: vk.QueueFamilyIgnored, DstQueueFamilyIndex: vk.QueueFamilyIgnored,
-		}})
+	// Copy storage image to swapchain
+	s.CmdCopyToSwapchain(cmd, storageImage, nextIdx)
 
 	vk.EndCommandBuffer(cmd)
 
