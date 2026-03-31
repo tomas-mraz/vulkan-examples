@@ -490,7 +490,7 @@ func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStruc
 
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
-	rtPipeline *ash.PipelineRtInfo,
+	rtPipeline *ash.PipelineRaytracing,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
 	storageImage vk.Image,
 	sbt *ash.ShaderBindingTable,
