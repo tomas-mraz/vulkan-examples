@@ -208,9 +208,9 @@ func main() {
 	}
 	cleanup.Add(&rtPipeline)
 	// --- Shader Binding Table ---
-	sbt, err := ash.NewSBT(dev, gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
+	sbt, err := ash.NewShaderBindingTable(dev, gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
 	if err != nil {
-		log.Fatal("NewSBT:", err)
+		log.Fatal("NewShaderBindingTable:", err)
 	}
 	cleanup.Add(&sbt)
 
