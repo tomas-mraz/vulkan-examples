@@ -291,7 +291,7 @@ func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.A
 }
 
 // buildTLAS creates a TLAS with one instance that references the model BLAS.
-func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas ash.VulkanAccelerationStructure) ash.VulkanAccelerationStructure {
+func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.CommandContext, blas ash.VulkanAccelerationStructure) ash.VulkanAccelerationStructure {
 	instanceData := make([]byte, 64)
 	transform := [12]float32{1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0}
 	blasAddr := blas.GetDeviceAddress()
@@ -473,7 +473,7 @@ func alignUp(size, alignment uint32) uint32 {
 	return (size + alignment - 1) &^ (alignment - 1)
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.VulkanCommandContext,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	rtPipeline *ash.PipelineRtInfo,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,

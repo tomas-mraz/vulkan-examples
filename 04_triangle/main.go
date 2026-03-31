@@ -148,7 +148,7 @@ func main() {
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext, b asch.VulkanBufferResource,
+	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.CommandContext, b asch.VulkanBufferResource,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.PipelineRasterizationInfo, angle float32,
 ) bool {

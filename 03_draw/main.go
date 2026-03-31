@@ -131,7 +131,7 @@ func main() {
 	}
 }
 
-func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext,
+func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.CommandContext,
 	buffer asch.VulkanBufferResource, gfx asch.PipelineRasterizationInfo,
 ) error {
 	clearValues := []vk.ClearValue{
@@ -166,7 +166,7 @@ func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRast
 }
 
 func drawFrame(device vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	cmdCtx asch.VulkanCommandContext, fence vk.Fence, semaphore vk.Semaphore,
+	cmdCtx asch.CommandContext, fence vk.Fence, semaphore vk.Semaphore,
 ) bool {
 	var nextIdx uint32
 

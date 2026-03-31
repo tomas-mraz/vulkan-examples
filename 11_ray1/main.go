@@ -253,7 +253,7 @@ func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.A
 	copy((*data)[:], src)
 }
 
-func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) ash.VulkanAccelerationStructure {
+func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.CommandContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) ash.VulkanAccelerationStructure {
 	var trianglesData vk.AccelerationStructureGeometryTrianglesData
 	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
 	trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
@@ -333,7 +333,7 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	}
 }
 
-func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas ash.VulkanAccelerationStructure) ash.VulkanAccelerationStructure {
+func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.CommandContext, blas ash.VulkanAccelerationStructure) ash.VulkanAccelerationStructure {
 	blasAddr := blas.GetDeviceAddress()
 
 	// VkAccelerationStructureInstanceKHR: 64 bytes
@@ -487,7 +487,7 @@ func alignUp(size, alignment uint32) uint32 {
 	return (size + alignment - 1) &^ (alignment - 1)
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.VulkanCommandContext,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	rtPipeline *ash.PipelineRtInfo,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
