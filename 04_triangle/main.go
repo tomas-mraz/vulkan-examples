@@ -110,7 +110,7 @@ func main() {
 	cleanup.Add(&buffer)
 
 	// Create graphics pipeline with push constants via framework
-	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
+	gfx, err := asch.NewPipelineRasterization(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
 		VertShaderData: vertShaderCode,
 		FragShaderData: fragShaderCode,
 		PushConstantRanges: []vk.PushConstantRange{{
@@ -150,7 +150,7 @@ func main() {
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext, b asch.VulkanBufferResource,
 	fence vk.Fence, semaphore vk.Semaphore,
-	gfx asch.PipelineRasterizationInfo, angle float32,
+	gfx asch.PipelineRasterization, angle float32,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)

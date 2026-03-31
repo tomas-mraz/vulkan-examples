@@ -106,7 +106,7 @@ func main() {
 	}
 	cleanup.Add(&buffer)
 
-	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
+	gfx, err := asch.NewPipelineRasterization(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
 		VertShaderData: vertShaderCode,
 		FragShaderData: fragShaderCode,
 	})
@@ -132,7 +132,7 @@ func main() {
 }
 
 func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
-	buffer asch.VulkanBufferResource, gfx asch.PipelineRasterizationInfo,
+	buffer asch.VulkanBufferResource, gfx asch.PipelineRasterization,
 ) error {
 	clearValues := []vk.ClearValue{
 		vk.NewClearValue([]float32{0.098, 0.71, 0.996, 1}),

@@ -146,7 +146,7 @@ func main() {
 	cleanup.Add(&desc)
 
 	// Pipeline
-	gfx, err := asch.NewGraphicsPipelineWithOptions(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
+	gfx, err := asch.NewPipelineRasterization(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
 		VertShaderData:       vertShaderCode,
 		FragShaderData:       fragShaderCode,
 		VertexBindings:       []vk.VertexInputBindingDescription{},
@@ -213,7 +213,7 @@ func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj
 func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
-	gfx asch.PipelineRasterizationInfo, descSets []vk.DescriptorSet,
+	gfx asch.PipelineRasterization, descSets []vk.DescriptorSet,
 	uniforms *asch.VulkanUniformBuffers,
 	proj, view, model *lin.Mat4x4,
 ) bool {
