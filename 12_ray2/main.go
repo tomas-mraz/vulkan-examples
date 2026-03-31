@@ -172,11 +172,27 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas.AccelerationStructure, storageImg.GetView(), model.GeometryBuffer.Buffer, model.Textures, &uniforms)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyDescriptorPool(dev, descPool, nil)
-		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
-	}))
+	// Build texture descriptor data
+	immutableFallbackSampler := []vk.Sampler{model.Textures[0].Sampler}
+	immutableTextureSamplers := make([]vk.Sampler, len(model.Textures))
+	textureInfos := make([]vk.DescriptorImageInfo, len(model.Textures))
+	for i, tex := range model.Textures {
+		immutableTextureSamplers[i] = tex.Sampler
+		textureInfos[i] = vk.DescriptorImageInfo{Sampler: tex.Sampler, ImageView: tex.View, ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal}
+	}
+	rayHitStages := vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit)
+	desc, err := ash.NewDescriptorSets(dev, swapchainLen, []ash.DescriptorBinding{
+		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit), AccelerationStructure: tlas.AccelerationStructure},
+		&ash.BindingStorageImage{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), ImageView: storageImg.GetView()},
+		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit | vk.ShaderStageMissBit), Uniforms: &uniforms},
+		&ash.BindingImageSampler{StageFlags: rayHitStages, ImageView: textureInfos[0].ImageView, Sampler: textureInfos[0].Sampler, ImmutableSamplers: immutableFallbackSampler},
+		&ash.BindingStorageBuffer{StageFlags: rayHitStages, Buffer: model.GeometryBuffer.Buffer},
+		&ash.BindingImageSamplerArray{StageFlags: rayHitStages, ImageInfos: textureInfos, ImmutableSamplers: immutableTextureSamplers},
+	})
+	if err != nil {
+		log.Fatal("NewDescriptorSets:", err)
+	}
+	cleanup.Add(&desc)
 	// --- RT Pipeline ---
 	rtPipeline, err := ash.NewRTPipeline(dev, ash.RTPipelineOptions{
 		Groups: []ash.RTShaderGroup{
@@ -185,7 +201,7 @@ func main() {
 			{MissShader: shadowMissShaderCode},
 			{ClosestHitShader: closestHitShaderCode, AnyHitShader: anyHitShaderCode},
 		},
-		DescriptorSetLayouts: []vk.DescriptorSetLayout{descLayout},
+		DescriptorSetLayouts: []vk.DescriptorSetLayout{desc.GetLayout()},
 	})
 	if err != nil {
 		log.Fatal("NewRTPipeline:", err)
@@ -223,7 +239,7 @@ func main() {
 		frameCounter = 0 // reset accumulation — camera changed
 
 		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
-			&rtPipeline, descSets, &uniforms,
+			&rtPipeline, desc.GetSets(), &uniforms,
 			storageImg.GetImage(), &sbt,
 			&projMatrix, &rotatedView) {
 			break
@@ -381,92 +397,6 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 		Buffer:                asBuf,
 		Type:                  vk.AccelerationStructureTypeTopLevel,
 	}
-}
-
-func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []ash.VulkanImageResource, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
-	textureCount := uint32(len(textures))
-	if textureCount == 0 {
-		log.Fatal("createDescriptorSets: texture array must contain at least the fallback texture")
-	}
-
-	immutableFallbackSampler := []vk.Sampler{textures[0].Sampler}
-	immutableTextureSamplers := make([]vk.Sampler, 0, len(textures))
-	for _, texture := range textures {
-		immutableTextureSamplers = append(immutableTextureSamplers, texture.Sampler)
-	}
-
-	var layout vk.DescriptorSetLayout
-	vk.CreateDescriptorSetLayout(dev, &vk.DescriptorSetLayoutCreateInfo{
-		SType: vk.StructureTypeDescriptorSetLayoutCreateInfo, BindingCount: 6,
-		PBindings: []vk.DescriptorSetLayoutBinding{
-			{Binding: 0, DescriptorType: vk.DescriptorTypeAccelerationStructure, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit)},
-			{Binding: 1, DescriptorType: vk.DescriptorTypeStorageImage, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit)},
-			{Binding: 2, DescriptorType: vk.DescriptorTypeUniformBuffer, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit | vk.ShaderStageMissBit)},
-			{Binding: 3, DescriptorType: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit), PImmutableSamplers: immutableFallbackSampler},
-			{Binding: 4, DescriptorType: vk.DescriptorTypeStorageBuffer, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit)},
-			{Binding: 5, DescriptorType: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: textureCount, StageFlags: vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit), PImmutableSamplers: immutableTextureSamplers},
-		},
-	}, nil, &layout)
-
-	var pool vk.DescriptorPool
-	vk.CreateDescriptorPool(dev, &vk.DescriptorPoolCreateInfo{
-		SType: vk.StructureTypeDescriptorPoolCreateInfo, MaxSets: count, PoolSizeCount: 6,
-		PPoolSizes: []vk.DescriptorPoolSize{
-			{Type: vk.DescriptorTypeAccelerationStructure, DescriptorCount: count},
-			{Type: vk.DescriptorTypeStorageImage, DescriptorCount: count},
-			{Type: vk.DescriptorTypeUniformBuffer, DescriptorCount: count},
-			{Type: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: count},
-			{Type: vk.DescriptorTypeStorageBuffer, DescriptorCount: count},
-			{Type: vk.DescriptorTypeCombinedImageSampler, DescriptorCount: count * textureCount},
-		},
-	}, nil, &pool)
-
-	sets := make([]vk.DescriptorSet, count)
-	for i := uint32(0); i < count; i++ {
-		vk.AllocateDescriptorSets(dev, &vk.DescriptorSetAllocateInfo{
-			SType: vk.StructureTypeDescriptorSetAllocateInfo, DescriptorPool: pool,
-			DescriptorSetCount: 1, PSetLayouts: []vk.DescriptorSetLayout{layout},
-		}, &sets[i])
-	}
-
-	textureInfos := make([]vk.DescriptorImageInfo, 0, len(textures))
-	for _, texture := range textures {
-		textureInfos = append(textureInfos, vk.DescriptorImageInfo{
-			Sampler:     texture.Sampler,
-			ImageView:   texture.View,
-			ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal,
-		})
-	}
-
-	for i := uint32(0); i < count; i++ {
-		// Acceleration structure write uses pNext
-		asWriteInfo := vk.WriteDescriptorSetAccelerationStructure{
-			SType:                      vk.StructureTypeWriteDescriptorSetAccelerationStructure,
-			AccelerationStructureCount: 1, PAccelerationStructures: []vk.AccelerationStructure{tlas},
-		}
-		fallbackTextureInfo := textureInfos[0]
-		geometryInfo := vk.DescriptorBufferInfo{Buffer: geometryBuf, Offset: 0, Range: vk.DeviceSize(vk.WholeSize)}
-		vk.UpdateDescriptorSets(dev, 6, []vk.WriteDescriptorSet{
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 0, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeAccelerationStructure, PNext: unsafe.Pointer(&asWriteInfo)},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 1, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeStorageImage,
-				PImageInfo:     []vk.DescriptorImageInfo{{ImageView: storageImageView, ImageLayout: vk.ImageLayoutGeneral}}},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 2, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeUniformBuffer,
-				PBufferInfo:    []vk.DescriptorBufferInfo{{Buffer: uniforms.GetBuffer(i), Offset: 0, Range: vk.DeviceSize(uniformSize)}}},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 3, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeCombinedImageSampler,
-				PImageInfo:     []vk.DescriptorImageInfo{fallbackTextureInfo}},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 4, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeStorageBuffer,
-				PBufferInfo:    []vk.DescriptorBufferInfo{geometryInfo}},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 5, DescriptorCount: textureCount,
-				DescriptorType: vk.DescriptorTypeCombinedImageSampler,
-				PImageInfo:     textureInfos},
-		}, 0, nil)
-	}
-	return layout, pool, sets
 }
 
 func alignUp(size, alignment uint32) uint32 {

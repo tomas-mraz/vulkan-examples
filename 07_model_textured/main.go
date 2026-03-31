@@ -153,7 +153,12 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// Descriptors (UBO + texture)
-	desc, err := asch.NewDescriptorUBOTexture(device.Device, &uniforms, &texture, swapchainLen)
+	desc, err := asch.NewDescriptorSets(device.Device, swapchainLen, []asch.DescriptorBinding{
+		&asch.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), Uniforms: &uniforms},
+		&asch.BindingImageSampler{StageFlags: vk.ShaderStageFlags(vk.ShaderStageFragmentBit),
+			ImageView: texture.GetView(), Sampler: texture.GetSampler(),
+			ImmutableSamplers: []vk.Sampler{texture.GetSampler()}},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}

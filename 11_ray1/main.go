@@ -167,11 +167,15 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas.AccelerationStructure, storageImg.GetView(), &uniforms)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyDescriptorPool(dev, descPool, nil)
-		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
-	}))
+	desc, err := ash.NewDescriptorSets(dev, swapchainLen, []ash.DescriptorBinding{
+		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), AccelerationStructure: tlas.AccelerationStructure},
+		&ash.BindingStorageImage{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), ImageView: storageImg.GetView()},
+		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), Uniforms: &uniforms},
+	})
+	if err != nil {
+		log.Fatal("NewDescriptorSets:", err)
+	}
+	cleanup.Add(&desc)
 	// --- RT Pipeline ---
 	rtPipeline, err := ash.NewRTPipeline(dev, ash.RTPipelineOptions{
 		Groups: []ash.RTShaderGroup{
@@ -179,7 +183,7 @@ func main() {
 			{MissShader: missShaderCode},
 			{ClosestHitShader: closestHitShaderCode},
 		},
-		DescriptorSetLayouts: []vk.DescriptorSetLayout{descLayout},
+		DescriptorSetLayouts: []vk.DescriptorSetLayout{desc.GetLayout()},
 	})
 	if err != nil {
 		log.Fatal("NewRTPipeline:", err)
@@ -210,7 +214,7 @@ func main() {
 	for !window.ShouldClose() {
 		glfw.PollEvents()
 		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
-			&rtPipeline, descSets, &uniforms,
+			&rtPipeline, desc.GetSets(), &uniforms,
 			storageImg.GetImage(), &sbt,
 			&projMatrix, &viewMatrix) {
 			break
@@ -432,55 +436,6 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 		Buffer:                asBuf,
 		Type:                  vk.AccelerationStructureTypeTopLevel,
 	}
-}
-
-func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
-	var layout vk.DescriptorSetLayout
-	vk.CreateDescriptorSetLayout(dev, &vk.DescriptorSetLayoutCreateInfo{
-		SType: vk.StructureTypeDescriptorSetLayoutCreateInfo, BindingCount: 3,
-		PBindings: []vk.DescriptorSetLayoutBinding{
-			{Binding: 0, DescriptorType: vk.DescriptorTypeAccelerationStructure, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit)},
-			{Binding: 1, DescriptorType: vk.DescriptorTypeStorageImage, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit)},
-			{Binding: 2, DescriptorType: vk.DescriptorTypeUniformBuffer, DescriptorCount: 1, StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit)},
-		},
-	}, nil, &layout)
-
-	var pool vk.DescriptorPool
-	vk.CreateDescriptorPool(dev, &vk.DescriptorPoolCreateInfo{
-		SType: vk.StructureTypeDescriptorPoolCreateInfo, MaxSets: count, PoolSizeCount: 3,
-		PPoolSizes: []vk.DescriptorPoolSize{
-			{Type: vk.DescriptorTypeAccelerationStructure, DescriptorCount: count},
-			{Type: vk.DescriptorTypeStorageImage, DescriptorCount: count},
-			{Type: vk.DescriptorTypeUniformBuffer, DescriptorCount: count},
-		},
-	}, nil, &pool)
-
-	sets := make([]vk.DescriptorSet, count)
-	for i := uint32(0); i < count; i++ {
-		vk.AllocateDescriptorSets(dev, &vk.DescriptorSetAllocateInfo{
-			SType: vk.StructureTypeDescriptorSetAllocateInfo, DescriptorPool: pool,
-			DescriptorSetCount: 1, PSetLayouts: []vk.DescriptorSetLayout{layout},
-		}, &sets[i])
-	}
-
-	for i := uint32(0); i < count; i++ {
-		// Acceleration structure write uses pNext
-		asWriteInfo := vk.WriteDescriptorSetAccelerationStructure{
-			SType:                      vk.StructureTypeWriteDescriptorSetAccelerationStructure,
-			AccelerationStructureCount: 1, PAccelerationStructures: []vk.AccelerationStructure{tlas},
-		}
-		vk.UpdateDescriptorSets(dev, 3, []vk.WriteDescriptorSet{
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 0, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeAccelerationStructure, PNext: unsafe.Pointer(&asWriteInfo)},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 1, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeStorageImage,
-				PImageInfo:     []vk.DescriptorImageInfo{{ImageView: storageImageView, ImageLayout: vk.ImageLayoutGeneral}}},
-			{SType: vk.StructureTypeWriteDescriptorSet, DstSet: sets[i], DstBinding: 2, DescriptorCount: 1,
-				DescriptorType: vk.DescriptorTypeUniformBuffer,
-				PBufferInfo:    []vk.DescriptorBufferInfo{{Buffer: uniforms.GetBuffer(i), Offset: 0, Range: vk.DeviceSize(uniformSize)}}},
-		}, 0, nil)
-	}
-	return layout, pool, sets
 }
 
 func alignUp(size, alignment uint32) uint32 {
