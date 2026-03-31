@@ -131,7 +131,7 @@ func main() {
 	}
 }
 
-func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.CommandContext,
+func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
 	buffer asch.VulkanBufferResource, gfx asch.PipelineRasterizationInfo,
 ) error {
 	clearValues := []vk.ClearValue{

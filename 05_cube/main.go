@@ -211,7 +211,7 @@ func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj
 }
 
 func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.CommandContext,
+	rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.PipelineRasterizationInfo, descSets []vk.DescriptorSet,
 	uniforms *asch.VulkanUniformBuffers,
