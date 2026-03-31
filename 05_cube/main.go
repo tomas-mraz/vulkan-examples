@@ -213,7 +213,7 @@ func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj
 func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
-	gfx asch.VulkanGfxPipelineInfo, descSets []vk.DescriptorSet,
+	gfx asch.PipelineRasterizationInfo, descSets []vk.DescriptorSet,
 	uniforms *asch.VulkanUniformBuffers,
 	proj, view, model *lin.Mat4x4,
 ) bool {

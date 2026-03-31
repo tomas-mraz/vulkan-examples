@@ -132,7 +132,7 @@ func main() {
 }
 
 func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext,
-	buffer asch.VulkanBufferResource, gfx asch.VulkanGfxPipelineInfo,
+	buffer asch.VulkanBufferResource, gfx asch.PipelineRasterizationInfo,
 ) error {
 	clearValues := []vk.ClearValue{
 		vk.NewClearValue([]float32{0.098, 0.71, 0.996, 1}),

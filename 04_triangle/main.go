@@ -150,7 +150,7 @@ func main() {
 func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
 	rasterPass asch.VulkanRasterPassInfo, cmdCtx asch.VulkanCommandContext, b asch.VulkanBufferResource,
 	fence vk.Fence, semaphore vk.Semaphore,
-	gfx asch.VulkanGfxPipelineInfo, angle float32,
+	gfx asch.PipelineRasterizationInfo, angle float32,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
