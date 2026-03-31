@@ -147,17 +147,11 @@ func main() {
 	indexAddr := indexBuf.DeviceAddress
 
 	// --- Build BLAS ---
-	blasBuf, blas := buildBLAS(dev, gpu, queue, &cmdCtx, vertexAddr, indexAddr, 3, 1)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyAccelerationStructure(dev, blas, nil)
-		blasBuf.Destroy()
-	}))
+	blas := buildBLAS(dev, gpu, queue, &cmdCtx, vertexAddr, indexAddr, 3, 1)
+	cleanup.Add(&blas)
 	// --- Build TLAS ---
-	tlasBuf, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, blas)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyAccelerationStructure(dev, tlas, nil)
-		tlasBuf.Destroy()
-	}))
+	tlas := buildTLAS(dev, gpu, queue, &cmdCtx, blas)
+	cleanup.Add(&tlas)
 	// --- Create storage image ---
 	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
 	if err != nil {
@@ -173,7 +167,7 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), &uniforms)
+	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas.AccelerationStructure, storageImg.GetView(), &uniforms)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyDescriptorPool(dev, descPool, nil)
 		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
@@ -249,7 +243,7 @@ func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.A
 	copy((*data)[:], src)
 }
 
-func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) (ash.VulkanBufferResource, vk.AccelerationStructure) {
+func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) ash.VulkanAccelerationStructure {
 	var trianglesData vk.AccelerationStructureGeometryTrianglesData
 	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
 	trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
@@ -322,16 +316,15 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	}
 
 	scratchBuf.Destroy()
-	return asBuf, as
+	return ash.VulkanAccelerationStructure{
+		AccelerationStructure: as,
+		Buffer:                asBuf,
+		Type:                  vk.AccelerationStructureTypeBottomLevel,
+	}
 }
 
-func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas vk.AccelerationStructure) (ash.VulkanBufferResource, vk.AccelerationStructure) {
-	// VkAccelerationStructureInstanceKHR is 64 bytes
-	// Layout: transformMatrix (48 bytes), instanceCustomIndex+mask (4 bytes),
-	//         instanceShaderBindingTableRecordOffset+flags (4 bytes), accelerationStructureReference (8 bytes)
-	blasAddr := vk.GetAccelerationStructureDeviceAddress(dev, &vk.AccelerationStructureDeviceAddressInfo{
-		SType: vk.StructureTypeAccelerationStructureDeviceAddressInfo, AccelerationStructure: blas,
-	})
+func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas ash.VulkanAccelerationStructure) ash.VulkanAccelerationStructure {
+	blasAddr := blas.GetDeviceAddress()
 
 	// VkAccelerationStructureInstanceKHR: 64 bytes
 	instanceData := make([]byte, 64)
@@ -424,7 +417,11 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 
 	scratchBuf.Destroy()
 	instanceBuf.Destroy()
-	return asBuf, as
+	return ash.VulkanAccelerationStructure{
+		AccelerationStructure: as,
+		Buffer:                asBuf,
+		Type:                  vk.AccelerationStructureTypeTopLevel,
+	}
 }
 
 func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {

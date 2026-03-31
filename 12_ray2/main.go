@@ -154,11 +154,8 @@ func main() {
 	cleanup.Add(&model)
 
 	// --- Build TLAS with one instance for the model BLAS ---
-	tlasBuf, tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.BLAS)
-	cleanup.Add(ash.DestroyerFunc(func() {
-		vk.DestroyAccelerationStructure(dev, tlas, nil)
-		tlasBuf.Destroy()
-	}))
+	tlas := buildTLAS(dev, gpu, queue, &cmdCtx, model.BLAS)
+	cleanup.Add(&tlas)
 
 	// --- Create storage image ---
 	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
@@ -175,7 +172,7 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas, storageImg.GetView(), model.GeometryBuffer.Buffer, model.Textures, &uniforms)
+	descLayout, descPool, descSets := createDescriptorSets(dev, swapchainLen, tlas.AccelerationStructure, storageImg.GetView(), model.GeometryBuffer.Buffer, model.Textures, &uniforms)
 	cleanup.Add(ash.DestroyerFunc(func() {
 		vk.DestroyDescriptorPool(dev, descPool, nil)
 		vk.DestroyDescriptorSetLayout(dev, descLayout, nil)
@@ -283,12 +280,10 @@ func setGeometryInstances(data *vk.AccelerationStructureGeometryData, inst *vk.A
 }
 
 // buildTLAS creates a TLAS with one instance that references the model BLAS.
-func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas vk.AccelerationStructure) (ash.VulkanBufferResource, vk.AccelerationStructure) {
+func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.VulkanCommandContext, blas ash.VulkanAccelerationStructure) ash.VulkanAccelerationStructure {
 	instanceData := make([]byte, 64)
 	transform := [12]float32{1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0}
-	blasAddr := vk.GetAccelerationStructureDeviceAddress(dev, &vk.AccelerationStructureDeviceAddressInfo{
-		SType: vk.StructureTypeAccelerationStructureDeviceAddressInfo, AccelerationStructure: blas,
-	})
+	blasAddr := blas.GetDeviceAddress()
 
 	copy(instanceData[:48], unsafe.Slice((*byte)(unsafe.Pointer(&transform[0])), 48))
 	instanceData[48] = 0
@@ -370,7 +365,11 @@ func buildTLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 
 	scratchBuf.Destroy()
 	instanceBuf.Destroy()
-	return asBuf, as
+	return ash.VulkanAccelerationStructure{
+		AccelerationStructure: as,
+		Buffer:                asBuf,
+		Type:                  vk.AccelerationStructureTypeTopLevel,
+	}
 }
 
 func createDescriptorSets(dev vk.Device, count uint32, tlas vk.AccelerationStructure, storageImageView vk.ImageView, geometryBuf vk.Buffer, textures []ash.VulkanImageResource, uniforms *ash.VulkanUniformBuffers) (vk.DescriptorSetLayout, vk.DescriptorPool, []vk.DescriptorSet) {
