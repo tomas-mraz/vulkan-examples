@@ -209,8 +209,11 @@ func main() {
 		vk.DestroyPipelineLayout(dev, pipelineLayout, nil)
 	}))
 	// --- Shader Binding Table ---
-	raygenSBT, missSBT, hitSBT, sbtBuf := createSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment)
-	cleanup.Add(&sbtBuf)
+	sbt, err := ash.NewSBT(dev, gpu, pipeline, shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
+	if err != nil {
+		log.Fatal("NewSBT:", err)
+	}
+	cleanup.Add(&sbt)
 
 	// --- Sync objects ---
 	sync, err := ash.NewSyncObjects(dev)
@@ -241,7 +244,7 @@ func main() {
 
 		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
 			pipeline, pipelineLayout, descSets, &uniforms,
-			storageImg.GetImage(), &raygenSBT, &missSBT, &hitSBT,
+			storageImg.GetImage(), &sbt,
 			&projMatrix, &viewMatrix, lightPos) {
 			break
 		}
@@ -531,35 +534,12 @@ func createRTPipeline(dev vk.Device, descLayout vk.DescriptorSetLayout) (vk.Pipe
 	return pipelineLayout, pip
 }
 
-func createSBT(dev vk.Device, gpu vk.PhysicalDevice, pipeline vk.Pipeline, handleSize, handleAlignment uint32) (vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, vk.StridedDeviceAddressRegion, ash.VulkanBufferResource) {
-	groupCount := uint32(4) // raygen, miss, shadow miss, hit
-	handleSizeAligned := ash.AlignUp(handleSize, handleAlignment)
-	// Read all shader group handles
-	sbtSize := groupCount * handleSizeAligned
-	handleStorage := make([]byte, sbtSize)
-	if err := vk.Error(vk.GetRayTracingShaderGroupHandles(dev, pipeline, 0, groupCount, uint64(sbtSize), unsafe.Pointer(&handleStorage[0]))); err != nil {
-		log.Fatal("GetRayTracingShaderGroupHandles:", err)
-	}
-
-	// Create single SBT buffer containing all groups
-	sbtBuf, err := ash.NewBufferHostVisible(dev, gpu, handleStorage, true, vk.BufferUsageFlags(vk.BufferUsageShaderBindingTableBit))
-	if err != nil {
-		log.Fatal(err)
-	}
-	sbtAddr := sbtBuf.DeviceAddress
-
-	raygenSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr, Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
-	missSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr + vk.DeviceAddress(handleSizeAligned), Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(2 * handleSizeAligned)}
-	hitSBT := vk.StridedDeviceAddressRegion{DeviceAddress: sbtAddr + vk.DeviceAddress(3*handleSizeAligned), Stride: vk.DeviceSize(handleSizeAligned), Size: vk.DeviceSize(handleSizeAligned)}
-	return raygenSBT, missSBT, hitSBT, sbtBuf
-}
-
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.VulkanCommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	pipeline vk.Pipeline, pipelineLayout vk.PipelineLayout,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
 	storageImage vk.Image,
-	raygenSBT, missSBT, hitSBT *vk.StridedDeviceAddressRegion,
+	sbt *ash.VulkanSBT,
 	proj, view *ash.Mat4x4, lightPos [4]float32,
 ) bool {
 	var nextIdx uint32
@@ -585,8 +565,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx 
 	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointRayTracing, pipelineLayout, 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
 
 	// Trace rays
-	emptySBT := vk.StridedDeviceAddressRegion{}
-	vk.CmdTraceRays(cmd, raygenSBT, missSBT, hitSBT, &emptySBT, windowWidth, windowHeight, 1)
+	vk.CmdTraceRays(cmd, &sbt.Raygen, &sbt.Miss, &sbt.Hit, &sbt.Callable, windowWidth, windowHeight, 1)
 
 	// Copy storage image to swapchain image
 	subresourceRange := vk.ImageSubresourceRange{AspectMask: vk.ImageAspectFlags(vk.ImageAspectColorBit), LevelCount: 1, LayerCount: 1}
