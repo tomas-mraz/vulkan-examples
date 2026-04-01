@@ -174,7 +174,7 @@ func main() {
 	rtx := ash.NewRaytracingContext(dev, gpu, queue, &cmdCtx)
 
 	// --- Load glTF model ---
-	model, err := ash.LoadGLTFModel(dev, gpu, queue, &cmdCtx, "assets/FlightHelmet/FlightHelmet.gltf")
+	model, err := ash.LoadGLTFModel(&rtx, "assets/FlightHelmet/FlightHelmet.gltf")
 	if err != nil {
 		log.Fatal(err)
 	}

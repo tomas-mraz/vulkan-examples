@@ -148,7 +148,7 @@ func main() {
 	indexAddr := indexBuf.DeviceAddress
 
 	// --- Build BLAS ---
-	blas := buildBLAS(dev, gpu, queue, &cmdCtx, vertexAddr, indexAddr, 3, 1)
+	blas := buildBLAS(&rtx, vertexAddr, indexAddr, 3, 1)
 	cleanup.Add(&blas)
 	// --- Build TLAS ---
 	tlas, err := rtx.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
@@ -236,14 +236,6 @@ func main() {
 
 // --- Helper functions ---
 
-func createDeviceLocalBuffer(dev vk.Device, gpu vk.PhysicalDevice, usage vk.BufferUsageFlags, size uint64) ash.VulkanBufferResource {
-	buf, err := ash.NewBufferDeviceLocal(dev, gpu, size, true, usage)
-	if err != nil {
-		log.Fatal("NewBufferResourceDeviceLocal:", err)
-	}
-	return buf
-}
-
 // setDeviceAddressConst writes a DeviceAddress into a DeviceOrHostAddressConst byte array
 func setDeviceAddressConst(addr *vk.DeviceOrHostAddressConst, da vk.DeviceAddress) {
 	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
@@ -261,7 +253,7 @@ func setGeometryTriangles(data *vk.AccelerationStructureGeometryData, tri *vk.Ac
 	copy((*data)[:], src)
 }
 
-func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash.CommandContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) ash.AccelerationStructure {
+func buildBLAS(rtx *ash.RaytracingContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) ash.AccelerationStructure {
 	var trianglesData vk.AccelerationStructureGeometryTrianglesData
 	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
 	trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
@@ -277,68 +269,14 @@ func buildBLAS(dev vk.Device, gpu vk.PhysicalDevice, queue vk.Queue, cmdCtx *ash
 	geometry.Flags = vk.GeometryFlags(vk.GeometryOpaqueBit)
 	setGeometryTriangles(&geometry.Geometry, &trianglesData)
 
-	buildInfo := vk.AccelerationStructureBuildGeometryInfo{
-		SType:         vk.StructureTypeAccelerationStructureBuildGeometryInfo,
-		Type:          vk.AccelerationStructureTypeBottomLevel,
-		Flags:         vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit),
-		GeometryCount: 1,
-		PGeometries:   []vk.AccelerationStructureGeometry{geometry},
-	}
-
-	var sizeInfo vk.AccelerationStructureBuildSizesInfo
-	sizeInfo.SType = vk.StructureTypeAccelerationStructureBuildSizesInfo
-	vk.GetAccelerationStructureBuildSizes(dev, vk.AccelerationStructureBuildTypeDevice, &buildInfo, &triangleCount, &sizeInfo)
-	sizeInfo.Deref()
-	log.Printf("BLAS size: AS=%d, scratch=%d", sizeInfo.AccelerationStructureSize, sizeInfo.BuildScratchSize)
-
-	// Create AS buffer
-	asBuf := createDeviceLocalBuffer(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageAccelerationStructureStorageBit|vk.BufferUsageShaderDeviceAddressBit),
-		uint64(sizeInfo.AccelerationStructureSize))
-
-	var as vk.AccelerationStructure
-	if err := vk.Error(vk.CreateAccelerationStructure(dev, &vk.AccelerationStructureCreateInfo{
-		SType: vk.StructureTypeAccelerationStructureCreateInfo, Buffer: asBuf.Buffer,
-		Size: sizeInfo.AccelerationStructureSize, Type: vk.AccelerationStructureTypeBottomLevel,
-	}, nil, &as)); err != nil {
-		log.Fatal("CreateAccelerationStructure (BLAS):", err)
-	}
-
-	// Scratch buffer
-	scratchBuf := createDeviceLocalBuffer(dev, gpu,
-		vk.BufferUsageFlags(vk.BufferUsageStorageBufferBit|vk.BufferUsageShaderDeviceAddressBit),
-		uint64(sizeInfo.BuildScratchSize))
-	scratchAddr := scratchBuf.DeviceAddress
-
-	// Create a fresh struct for the build call (PassRef caches the C struct)
-	buildInfo2 := vk.AccelerationStructureBuildGeometryInfo{
-		SType:                    vk.StructureTypeAccelerationStructureBuildGeometryInfo,
-		Type:                     vk.AccelerationStructureTypeBottomLevel,
-		Flags:                    vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit),
-		Mode:                     vk.BuildAccelerationStructureModeBuild,
-		DstAccelerationStructure: as,
-		GeometryCount:            1,
-		PGeometries:              []vk.AccelerationStructureGeometry{geometry},
-	}
-	setDeviceAddress(&buildInfo2.ScratchData, scratchAddr)
-
-	rangeInfos := []vk.AccelerationStructureBuildRangeInfo{{PrimitiveCount: triangleCount}}
-
-	cmd, err := cmdCtx.BeginOneTime()
+	blas, err := rtx.NewBottomLevelAccelerationStructure(
+		[]vk.AccelerationStructureGeometry{geometry},
+		[]uint32{triangleCount},
+		vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit))
 	if err != nil {
-		log.Fatal("BeginOneTime:", err)
+		log.Fatal("NewBottomLevelAccelerationStructure:", err)
 	}
-	vk.CmdBuildAccelerationStructures(cmd, 1, &buildInfo2, [][]vk.AccelerationStructureBuildRangeInfo{rangeInfos})
-	if err := cmdCtx.EndOneTime(queue, cmd); err != nil {
-		log.Fatal("EndOneTime:", err)
-	}
-
-	scratchBuf.Destroy()
-	return ash.AccelerationStructure{
-		AccelerationStructure: as,
-		Buffer:                asBuf,
-		Type:                  vk.AccelerationStructureTypeBottomLevel,
-	}
+	return blas
 }
 
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
