@@ -55,6 +55,8 @@ func init() {
 }
 
 func main() {
+	ash.StartPrintGCPauses(10 * time.Second)
+
 	if err := glfw.Init(); err != nil {
 		log.Fatal(err)
 	}
