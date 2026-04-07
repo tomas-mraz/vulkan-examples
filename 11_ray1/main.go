@@ -305,14 +305,6 @@ func waitForFramebufferSize(window *glfw.Window) vk.Extent2D {
 	return ash.NewExtentSize(width, height)
 }
 
-func setDeviceAddressConst(addr *vk.DeviceOrHostAddressConst, da vk.DeviceAddress) {
-	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
-}
-
-func setDeviceAddress(addr *vk.DeviceOrHostAddress, da vk.DeviceAddress) {
-	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
-}
-
 func setGeometryTriangles(data *vk.AccelerationStructureGeometryData, tri *vk.AccelerationStructureGeometryTrianglesData) {
 	cTri, _ := tri.PassRef()
 	src := unsafe.Slice((*byte)(unsafe.Pointer(cTri)), len(*data))
@@ -323,11 +315,11 @@ func buildBLAS(rtx *ash.RaytracingContext, vertexAddr, indexAddr vk.DeviceAddres
 	var trianglesData vk.AccelerationStructureGeometryTrianglesData
 	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
 	trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
-	setDeviceAddressConst(&trianglesData.VertexData, vertexAddr)
+	vk.SetDeviceAddressConst(&trianglesData.VertexData, vertexAddr)
 	trianglesData.VertexStride = 12
 	trianglesData.MaxVertex = maxVertex
 	trianglesData.IndexType = vk.IndexTypeUint32
-	setDeviceAddressConst(&trianglesData.IndexData, indexAddr)
+	vk.SetDeviceAddressConst(&trianglesData.IndexData, indexAddr)
 
 	var geometry vk.AccelerationStructureGeometry
 	geometry.SType = vk.StructureTypeAccelerationStructureGeometry
