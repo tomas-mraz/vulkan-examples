@@ -305,12 +305,6 @@ func waitForFramebufferSize(window *glfw.Window) vk.Extent2D {
 	return ash.NewExtentSize(width, height)
 }
 
-func setGeometryTriangles(data *vk.AccelerationStructureGeometryData, tri *vk.AccelerationStructureGeometryTrianglesData) {
-	cTri, _ := tri.PassRef()
-	src := unsafe.Slice((*byte)(unsafe.Pointer(cTri)), len(*data))
-	copy((*data)[:], src)
-}
-
 func buildBLAS(rtx *ash.RaytracingContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) ash.AccelerationStructure {
 	var trianglesData vk.AccelerationStructureGeometryTrianglesData
 	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
@@ -325,7 +319,7 @@ func buildBLAS(rtx *ash.RaytracingContext, vertexAddr, indexAddr vk.DeviceAddres
 	geometry.SType = vk.StructureTypeAccelerationStructureGeometry
 	geometry.GeometryType = vk.GeometryTypeTriangles
 	geometry.Flags = vk.GeometryFlags(vk.GeometryOpaqueBit)
-	setGeometryTriangles(&geometry.Geometry, &trianglesData)
+	vk.SetGeometryTriangles(&geometry.Geometry, &trianglesData)
 
 	blas, err := rtx.NewBottomLevelAccelerationStructure(
 		[]vk.AccelerationStructureGeometry{geometry},
