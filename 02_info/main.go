@@ -5,7 +5,7 @@ import (
 	"log"
 
 	vk "github.com/tomas-mraz/vulkan"
-	asch "github.com/tomas-mraz/vulkan-ash"
+	"github.com/tomas-mraz/vulkan-ash"
 	"github.com/xlab/tablewriter"
 )
 
@@ -17,14 +17,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	asch.SetDebug(false)
-	device, err := asch.NewDevice("VulkanInfo", nil, createHeadlessSurface, 0, nil)
+	ash.SetDebug(false)
+	manager, err := ash.NewManager("VulkanInfo", nil, nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer destroyDevice(device)
+	defer manager.Destroy()
 
-	gpuDevices, err := getPhysicalDevices(device.Instance)
+	gpuDevices, err := getPhysicalDevices(manager.Instance)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,19 +34,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	printInfo(device, gpuDevices, loaderVersion)
-}
-
-func createHeadlessSurface(vk.Instance, uintptr) (vk.Surface, error) {
-	return vk.NullSurface, nil
-}
-
-func destroyDevice(device asch.Vulkan) {
-	vk.DestroyDevice(device.Device, nil)
-	if device.Surface != vk.NullSurface {
-		vk.DestroySurface(device.Instance, device.Surface, nil)
-	}
-	vk.DestroyInstance(device.Instance, nil)
+	printInfo(&manager, gpuDevices, loaderVersion)
 }
 
 func getPhysicalDevices(instance vk.Instance) ([]vk.PhysicalDevice, error) {
@@ -118,9 +106,9 @@ func physicalDeviceType(t vk.PhysicalDeviceType) string {
 	}
 }
 
-func printInfo(device asch.Vulkan, gpuDevices []vk.PhysicalDevice, loaderVersion uint32) {
+func printInfo(manager *ash.Manager, gpuDevices []vk.PhysicalDevice, loaderVersion uint32) {
 	var props vk.PhysicalDeviceProperties
-	vk.GetPhysicalDeviceProperties(device.GpuDevice, &props)
+	vk.GetPhysicalDeviceProperties(manager.Gpu, &props)
 	props.Deref()
 
 	table := tablewriter.CreateTable()
@@ -136,9 +124,9 @@ func printInfo(device asch.Vulkan, gpuDevices []vk.PhysicalDevice, loaderVersion
 	table.AddRow("API Version", vk.Version(props.ApiVersion))
 	table.AddRow("Driver Version", props.DriverVersion)
 
-	if device.Surface != vk.NullSurface {
+	if manager.Surface != vk.NullSurface {
 		var caps vk.SurfaceCapabilities
-		vk.GetPhysicalDeviceSurfaceCapabilities(device.GpuDevice, device.Surface, &caps)
+		vk.GetPhysicalDeviceSurfaceCapabilities(manager.Gpu, manager.Surface, &caps)
 		caps.Deref()
 		caps.CurrentExtent.Deref()
 		caps.MinImageExtent.Deref()
@@ -155,7 +143,7 @@ func printInfo(device asch.Vulkan, gpuDevices []vk.PhysicalDevice, loaderVersion
 		table.AddRow("Current transform", fmt.Sprintf("%02x", caps.CurrentTransform))
 		table.AddRow("Allowed transforms", fmt.Sprintf("%02x", caps.SupportedTransforms))
 		var formatCount uint32
-		vk.GetPhysicalDeviceSurfaceFormats(device.GpuDevice, device.Surface, &formatCount, nil)
+		vk.GetPhysicalDeviceSurfaceFormats(manager.Gpu, manager.Surface, &formatCount, nil)
 		table.AddRow("Surface formats", formatCount)
 		table.AddSeparator()
 	}
@@ -168,7 +156,7 @@ func printInfo(device asch.Vulkan, gpuDevices []vk.PhysicalDevice, loaderVersion
 
 	table.AddSeparator()
 	table.AddRow("DEVICE EXTENSIONS", "")
-	for i, name := range asch.GetDeviceExtensions(device.GpuDevice) {
+	for i, name := range ash.GetDeviceExtensions(manager.Gpu) {
 		table.AddRow(i+1, name)
 	}
 
@@ -180,7 +168,7 @@ func printInfo(device asch.Vulkan, gpuDevices []vk.PhysicalDevice, loaderVersion
 		}
 	}
 
-	if layers := getDeviceLayers(device.GpuDevice); len(layers) > 0 {
+	if layers := getDeviceLayers(manager.Gpu); len(layers) > 0 {
 		table.AddSeparator()
 		table.AddRow("DEVICE LAYERS", "")
 		for i, name := range layers {
