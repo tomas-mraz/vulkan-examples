@@ -13,8 +13,7 @@ import (
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 	vk "github.com/tomas-mraz/vulkan"
-	asch "github.com/tomas-mraz/vulkan-ash"
-	lin "github.com/xlab/linmath"
+	"github.com/tomas-mraz/vulkan-ash"
 )
 
 //go:embed shaders/cube.vert.spv
@@ -38,7 +37,7 @@ func init() {
 
 // uniformData matches the shader's uniform buffer layout.
 type uniformData struct {
-	MVP      lin.Mat4x4
+	MVP      ash.Mat4x4
 	Position [36][4]float32
 	Attr     [36][4]float32
 }
@@ -60,33 +59,29 @@ func main() {
 		log.Fatal(err)
 	}
 
+	var cleanup ash.Cleanup
+	defer cleanup.Destroy()
+
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
 	glfw.WindowHint(glfw.Resizable, glfw.False)
 	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer window.Destroy()
+	cleanup.Add(window)
 
-	var cleanup asch.Cleanup
-	defer cleanup.Destroy()
-
-	asch.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
-	device, err := asch.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
-		surfPtr, err := window.CreateWindowSurface(instance, nil)
-		if err != nil {
-			return vk.NullSurface, err
-		}
-		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0, nil)
+	createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
+		return ash.NewDesktopSurface(instance, window)
+	}
+	manager, err := ash.NewManager(appName, extensions, createSurfaceFn, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&device)
+	cleanup.Add(&manager)
 
-	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := asch.NewSwapchain(device.Device, device.GpuDevice, device.Surface, windowSize)
+	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
+	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -94,13 +89,13 @@ func main() {
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	// Depth buffer via framework
-	depth, err := asch.NewImageDepth(device.Device, device.GpuDevice, windowWidth, windowHeight, vk.FormatD16Unorm)
+	depth, err := ash.NewImageDepth(manager.Device, manager.Gpu, windowWidth, windowHeight, vk.FormatD16Unorm)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&depth)
 
-	rasterPass, err := asch.NewRasterPassWithDepth(device.Device, swapchain.DisplayFormat, depth.GetFormat())
+	rasterPass, err := ash.NewRasterPassWithDepth(manager.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -109,7 +104,7 @@ func main() {
 	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), depth.GetView()); err != nil {
 		log.Fatal(err)
 	}
-	cmdCtx, err := asch.NewCommandContext(device.Device, 0, swapchainLen)
+	cmdCtx, err := ash.NewCommandContext(manager.Device, 0, swapchainLen)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -123,25 +118,25 @@ func main() {
 	rgba := image.NewRGBA(img.Bounds())
 	draw.Draw(rgba, rgba.Bounds(), img, image.Point{}, draw.Src)
 
-	texture, err := asch.NewImageTexture(device.Device, device.GpuDevice, uint32(rgba.Bounds().Dx()), uint32(rgba.Bounds().Dy()), rgba.Pix)
+	texture, err := ash.NewImageTexture(manager.Device, manager.Gpu, uint32(rgba.Bounds().Dx()), uint32(rgba.Bounds().Dy()), rgba.Pix)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&texture)
-	asch.TransitionImageLayout(device.Device, device.Queue, cmdCtx.GetCmdPool(),
+	ash.TransitionImageLayout(manager.Device, manager.Queue, cmdCtx.GetCmdPool(),
 		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
 
 	// Uniform buffers (one per swapchain image) via framework
-	uniforms, err := asch.NewUniformBuffers(device.Device, device.GpuDevice, swapchainLen, uniformDataSize)
+	uniforms, err := ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformDataSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&uniforms)
 
 	// Descriptor set layout + pool + sets
-	desc, err := asch.NewDescriptorSets(device.Device, swapchainLen, []asch.DescriptorBinding{
-		&asch.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), Uniforms: &uniforms},
-		asch.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, []vk.Sampler{texture.GetSampler()}),
+	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
+		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), Uniforms: &uniforms},
+		ash.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, []vk.Sampler{texture.GetSampler()}),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -149,7 +144,7 @@ func main() {
 	cleanup.Add(&desc)
 
 	// Pipeline
-	gfx, err := asch.NewPipelineRasterization(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
+	gfx, err := ash.NewPipelineRasterization(manager.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), ash.PipelineOptions{
 		VertShaderData:       vertShaderCode,
 		FragShaderData:       fragShaderCode,
 		VertexBindings:       []vk.VertexInputBindingDescription{},
@@ -163,16 +158,16 @@ func main() {
 	cleanup.Add(&gfx)
 
 	// Sync objects
-	sync, err := asch.NewSyncObjects(device.Device)
+	sync, err := ash.NewSyncObjects(manager.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&sync)
 
 	// Camera matrices
-	var projMatrix, viewMatrix, modelMatrix lin.Mat4x4
-	projMatrix.Perspective(lin.DegreesToRadians(45.0), 1.0, 0.1, 100.0)
-	viewMatrix.LookAt(&lin.Vec3{0.0, 3.0, 5.0}, &lin.Vec3{0.0, 0.0, 0.0}, &lin.Vec3{0.0, 1.0, 0.0})
+	var projMatrix, viewMatrix, modelMatrix ash.Mat4x4
+	projMatrix.Perspective(ash.DegreesToRadians(45.0), 1.0, 0.1, 100.0)
+	viewMatrix.LookAt(&ash.Vec3{0.0, 3.0, 5.0}, &ash.Vec3{0.0, 0.0, 0.0}, &ash.Vec3{0.0, 1.0, 0.0})
 	modelMatrix.Identity()
 	projMatrix[1][1] *= -1 // Flip for Vulkan
 
@@ -184,12 +179,12 @@ func main() {
 
 		// Rotate model
 		elapsed := float32(time.Since(startTime).Seconds()) * 45.0 // 45 deg/sec
-		var rotated lin.Mat4x4
+		var rotated ash.Mat4x4
 		modelMatrix.Identity()
 		rotated.Dup(&modelMatrix)
-		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, lin.DegreesToRadians(elapsed))
+		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, ash.DegreesToRadians(elapsed))
 
-		if !drawCubeFrame(device.Device, device.Queue, swapchain, rasterPass, cmdCtx,
+		if !drawCubeFrame(manager.Device, manager.Queue, swapchain, rasterPass, cmdCtx,
 			sync.Fence, sync.Semaphore,
 			gfx, desc.GetSets(),
 			&uniforms,
@@ -199,8 +194,8 @@ func main() {
 	}
 }
 
-func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj, view, model *lin.Mat4x4) {
-	var VP, MVP lin.Mat4x4
+func updateUniformBuffer(uniforms *ash.VulkanUniformBuffers, index uint32, proj, view, model *ash.Mat4x4) {
+	var VP, MVP ash.Mat4x4
 	VP.Mult(proj, view)
 	MVP.Mult(&VP, model)
 
@@ -213,12 +208,12 @@ func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj
 	uniforms.Update(index, data.Bytes())
 }
 
-func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.Display,
-	rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
+func drawCubeFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain,
+	rasterPass ash.RasterizationPass, cmdCtx ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
-	gfx asch.PipelineRasterization, descSets []vk.DescriptorSet,
-	uniforms *asch.VulkanUniformBuffers,
-	proj, view, model *lin.Mat4x4,
+	gfx ash.PipelineRasterization, descSets []vk.DescriptorSet,
+	uniforms *ash.VulkanUniformBuffers,
+	proj, view, model *ash.Mat4x4,
 ) bool {
 	var nextIdx uint32
 	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
