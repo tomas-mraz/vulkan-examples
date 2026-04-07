@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"log"
 	"runtime"
+	"time"
 	"unsafe"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
@@ -53,7 +54,7 @@ func main() {
 	}
 
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
-	glfw.WindowHint(glfw.Resizable, glfw.False)
+	glfw.WindowHint(glfw.Resizable, glfw.True)
 	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -104,7 +105,7 @@ func main() {
 	const shaderGroupHandleAlignment = 32
 
 	// Create swapchain
-	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
+	windowSize := waitForFramebufferSize(window)
 	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
@@ -112,6 +113,14 @@ func main() {
 	cleanup.Add(&swapchain)
 	swapchainCtx := ash.NewSwapchainContext(&manager, &swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
+
+	window.SetFramebufferSizeCallback(func(_ *glfw.Window, width int, height int) {
+		if width == 0 || height == 0 {
+			return
+		}
+		windowSize = ash.NewExtentSize(width, height)
+		swapchainCtx.RequestRecreate()
+	})
 
 	cmdCtx, err := ash.NewCommandContext(manager.Device, 0, swapchainLen)
 	if err != nil {
@@ -174,11 +183,16 @@ func main() {
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
-		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), AccelerationStructure: tlas.AccelerationStructure},
-		ash.NewBindingStorageImage(vk.ShaderStageFlags(vk.ShaderStageRaygenBit), &storageImg),
-		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), Uniforms: &uniforms},
-	})
+	rtStageFlags := vk.ShaderStageFlags(vk.ShaderStageRaygenBit)
+	descriptorBindingsFn := func(img *ash.ImageResource, ub *ash.VulkanUniformBuffers) []ash.DescriptorBinding {
+		return []ash.DescriptorBinding{
+			&ash.BindingAccelerationStructure{StageFlags: rtStageFlags, AccelerationStructure: tlas.AccelerationStructure},
+			ash.NewBindingStorageImage(rtStageFlags, img),
+			&ash.BindingUniformBuffer{StageFlags: rtStageFlags, Uniforms: ub},
+		}
+	}
+
+	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, descriptorBindingsFn(&storageImg, &uniforms))
 	if err != nil {
 		log.Fatal("NewDescriptorSets:", err)
 	}
@@ -212,6 +226,12 @@ func main() {
 	}
 	cleanup.Add(&sync)
 
+	rtRecreateCfg := ash.RaytracingRecreateConfig{
+		QueueFamilyIndex:   0,
+		UniformSize:        uniformSize,
+		DescriptorBindings: descriptorBindingsFn,
+	}
+
 	// Camera matrices
 	var projMatrix, viewMatrix ash.Mat4x4
 	projMatrix.Perspective(ash.DegreesToRadians(60.0), float32(windowWidth)/float32(windowHeight), 0.1, 512.0)
@@ -222,20 +242,27 @@ func main() {
 
 	for !window.ShouldClose() {
 		glfw.PollEvents()
+		if window.GetAttrib(glfw.Iconified) == 1 {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 
-		// Update uniform buffer with inverse matrices
-		projInv := ash.InvertMatrix(&projMatrix)
-		viewInv := ash.InvertMatrix(&viewMatrix)
-
-		imageIndex, acquired, err := swapchainCtx.AcquireNextImage(vk.MaxUint64, sync.Semaphore, vk.NullFence)
+		imageIndex, ok, err := swapchainCtx.AcquireNextImageRaytracing(windowSize, &cmdCtx, &storageImg, &uniforms, &desc, rtRecreateCfg, sync.Semaphore)
 		if err != nil {
 			log.Println("AcquireNextImage:", err)
 			break
 		}
-		if !acquired {
+		if !ok {
 			continue
 		}
 
+		// Update uniform buffer with inverse matrices
+		s := swapchainCtx.GetSwapchain()
+		aspect := float32(s.DisplaySize.Width) / float32(s.DisplaySize.Height)
+		projMatrix.Perspective(ash.DegreesToRadians(60.0), aspect, 0.1, 512.0)
+		projMatrix[1][1] *= -1
+		projInv := ash.InvertMatrix(&projMatrix)
+		viewInv := ash.InvertMatrix(&viewMatrix)
 		ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv}
 		uniforms.Update(imageIndex, ubo.Bytes())
 
@@ -245,15 +272,12 @@ func main() {
 			break
 		}
 
-		// Bind RT pipeline and descriptors
-		vk.CmdBindPipeline(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetPipeline())
-		vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetLayout(), 0, 1, []vk.DescriptorSet{desc.GetSets()[imageIndex]}, 0, nil)
-
-		// Trace rays
-		vk.CmdTraceRays(cmd, &sbt.Raygen, &sbt.Miss, &sbt.Hit, &sbt.Callable, windowWidth, windowHeight, 1)
+		// Bind RT pipeline, descriptors and trace rays
+		cmdCtx.BindRTPipeline(cmd, rtPipeline, desc.GetSets()[imageIndex])
+		cmdCtx.TraceRays(cmd, &sbt, s.DisplaySize)
 
 		// Copy storage image to swapchain
-		swapchainCtx.GetSwapchain().CmdCopyToSwapchain(cmd, storageImg.GetImage(), imageIndex)
+		s.CmdCopyToSwapchain(cmd, storageImg.GetImage(), imageIndex)
 
 		if err := swapchainCtx.EndFrame(cmd); err != nil {
 			log.Println("EndFrame:", err)
@@ -263,7 +287,7 @@ func main() {
 			log.Println("SubmitRender:", err)
 			break
 		}
-		if _, err := swapchainCtx.PresentImage(imageIndex, nil); err != nil {
+		if err := swapchainCtx.PresentImageRaytracing(windowSize, &cmdCtx, &storageImg, &uniforms, &desc, rtRecreateCfg, imageIndex); err != nil {
 			log.Println("PresentImage:", err)
 			break
 		}
@@ -271,6 +295,15 @@ func main() {
 }
 
 // --- Helper functions ---
+
+func waitForFramebufferSize(window *glfw.Window) vk.Extent2D {
+	width, height := window.GetFramebufferSize()
+	for width == 0 || height == 0 {
+		glfw.WaitEvents()
+		width, height = window.GetFramebufferSize()
+	}
+	return ash.NewExtentSize(width, height)
+}
 
 func setDeviceAddressConst(addr *vk.DeviceOrHostAddressConst, da vk.DeviceAddress) {
 	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
