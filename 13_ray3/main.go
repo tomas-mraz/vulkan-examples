@@ -157,18 +157,19 @@ func main() {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
-	rtx := ash.NewRaytracingContext(dev, gpu, queue, &cmdCtx)
+
+	rtContext := ash.NewRaytracingContext(dev, gpu, queue, &cmdCtx)
+	cleanup.Add(&rtContext)
 
 	// --- Load glTF model ---
-	model, err := ash.LoadGLTFModel(&rtx, "assets/FlightHelmet/FlightHelmet.gltf")
+	model, err := ash.LoadGLTFModel(&rtContext, "assets/FlightHelmet/FlightHelmet.gltf")
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("Loaded %d primitives into one BLAS", len(model.Primitives))
-	cleanup.Add(&model)
 
 	// --- Build TLAS with one instance for the model BLAS ---
-	tlas, err := rtx.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
+	tlas, err := rtContext.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
 		Transform:           [12]float32{1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0},
 		InstanceCustomIndex: 0,
 		Mask:                0xFF,
@@ -179,7 +180,6 @@ func main() {
 	if err != nil {
 		log.Fatal("NewTopLevelAccelerationStructure:", err)
 	}
-	cleanup.Add(&tlas)
 
 	// --- Create storage image ---
 	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
