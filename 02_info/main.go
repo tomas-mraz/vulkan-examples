@@ -18,7 +18,7 @@ func main() {
 	}
 
 	asch.SetDebug(false)
-	device, err := asch.NewDevice("VulkanInfo", nil, createHeadlessSurface, 0)
+	device, err := asch.NewDevice("VulkanInfo", nil, createHeadlessSurface, 0, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,7 +76,6 @@ func getInstanceExtensions() []string {
 	}
 	return names
 }
-
 
 func getInstanceLayers() []string {
 	var count uint32

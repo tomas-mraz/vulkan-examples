@@ -79,7 +79,7 @@ func main() {
 			return vk.NullSurface, err
 		}
 		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0)
+	}, 0, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -141,9 +141,7 @@ func main() {
 	// Descriptor set layout + pool + sets
 	desc, err := asch.NewDescriptorSets(device.Device, swapchainLen, []asch.DescriptorBinding{
 		&asch.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), Uniforms: &uniforms},
-		&asch.BindingImageSampler{StageFlags: vk.ShaderStageFlags(vk.ShaderStageFragmentBit),
-			ImageView: texture.GetView(), Sampler: texture.GetSampler(),
-			ImmutableSamplers: []vk.Sampler{texture.GetSampler()}},
+		asch.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, []vk.Sampler{texture.GetSampler()}),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -215,7 +213,7 @@ func updateUniformBuffer(uniforms *asch.VulkanUniformBuffers, index uint32, proj
 	uniforms.Update(index, data.Bytes())
 }
 
-func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
+func drawCubeFrame(dev vk.Device, queue vk.Queue, s asch.Display,
 	rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.PipelineRasterization, descSets []vk.DescriptorSet,

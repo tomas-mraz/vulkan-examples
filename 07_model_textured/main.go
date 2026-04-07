@@ -78,7 +78,7 @@ func main() {
 			return vk.NullSurface, err
 		}
 		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0)
+	}, 0, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -155,9 +155,7 @@ func main() {
 	// Descriptors (UBO + texture)
 	desc, err := asch.NewDescriptorSets(device.Device, swapchainLen, []asch.DescriptorBinding{
 		&asch.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), Uniforms: &uniforms},
-		&asch.BindingImageSampler{StageFlags: vk.ShaderStageFlags(vk.ShaderStageFragmentBit),
-			ImageView: texture.GetView(), Sampler: texture.GetSampler(),
-			ImmutableSamplers: []vk.Sampler{texture.GetSampler()}},
+		asch.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, []vk.Sampler{texture.GetSampler()}),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -218,7 +216,7 @@ func main() {
 	}
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
+func drawFrame(dev vk.Device, queue vk.Queue, s asch.Display,
 	rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.PipelineRasterization, descSets []vk.DescriptorSet,

@@ -79,7 +79,7 @@ func main() {
 			return vk.NullSurface, err
 		}
 		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0)
+	}, 0, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func main() {
 	}
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
+func drawFrame(dev vk.Device, queue vk.Queue, s asch.Display,
 	rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx asch.PipelineRasterization, descSets []vk.DescriptorSet,

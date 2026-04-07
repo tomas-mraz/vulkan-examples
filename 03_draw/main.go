@@ -4,10 +4,11 @@ import (
 	_ "embed"
 	"log"
 	"runtime"
+	"time"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 	vk "github.com/tomas-mraz/vulkan"
-	asch "github.com/tomas-mraz/vulkan-ash"
+	ash "github.com/tomas-mraz/vulkan-ash"
 )
 
 //go:embed shaders/tri-vert.spv
@@ -38,38 +39,46 @@ func main() {
 	}
 
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
-	glfw.WindowHint(glfw.Resizable, glfw.False)
+	glfw.WindowHint(glfw.Resizable, glfw.True)
 	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer window.Destroy()
 
-	var cleanup asch.Cleanup
+	var cleanup ash.Cleanup
 	defer cleanup.Destroy()
 
-	asch.SetDebug(false)
+	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
-	device, err := asch.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
-		surfPtr, err := window.CreateWindowSurface(instance, nil)
-		if err != nil {
-			return vk.NullSurface, err
-		}
-		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0)
+
+	createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
+		return ash.NewDesktopSurface(instance, window)
+	}
+
+	manager, err := ash.NewManager(appName, extensions, createSurfaceFn, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&device)
+	cleanup.Add(&manager)
 
-	windowSize := asch.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := asch.NewSwapchain(device.Device, device.GpuDevice, device.Surface, windowSize)
+	windowSize := waitForFramebufferSize(window)
+	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&swapchain)
+	swapchainCtx := ash.NewSwapchainContext(&manager, &swapchain)
 
-	rasterPass, err := asch.NewRasterPass(device.Device, swapchain.DisplayFormat)
+	window.SetFramebufferSizeCallback(func(_ *glfw.Window, width int, height int) {
+		if width == 0 || height == 0 {
+			return
+		}
+		windowSize = ash.NewExtentSize(width, height)
+		swapchainCtx.RequestRecreate()
+	})
+
+	rasterPass, err := ash.NewRasterPass(manager.Device, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -77,13 +86,13 @@ func main() {
 	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), vk.NullImageView); err != nil {
 		log.Fatal(err)
 	}
-	cmdCtx, err := asch.NewCommandContext(device.Device, 0, swapchain.DefaultSwapchainLen())
+	cmdCtx, err := ash.NewCommandContext(manager.Device, 0, swapchain.DefaultSwapchainLen())
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
 
-	sync, err := asch.NewSyncObjects(device.Device)
+	sync, err := ash.NewSyncObjects(manager.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -94,9 +103,9 @@ func main() {
 		1, -1, 0,
 		0, 1, 0,
 	}
-	buffer, err := asch.NewBufferHostVisible(
-		device.Device,
-		device.GpuDevice,
+	buffer, err := ash.NewBufferHostVisible(
+		manager.Device,
+		manager.Gpu,
 		vertices,
 		false,
 		vk.BufferUsageFlags(vk.BufferUsageVertexBufferBit),
@@ -106,120 +115,71 @@ func main() {
 	}
 	cleanup.Add(&buffer)
 
-	gfx, err := asch.NewPipelineRasterization(device.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), asch.PipelineOptions{
+	pipelineOptions := ash.PipelineOptions{
 		VertShaderData: vertShaderCode,
 		FragShaderData: fragShaderCode,
-	})
+	}
+	pipeline, err := ash.NewPipelineRasterization(manager.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), pipelineOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&gfx)
+	cleanup.Add(&pipeline)
 
-	if err := recordCommandBuffers(swapchain, rasterPass, cmdCtx, buffer, gfx); err != nil {
-		log.Fatal(err)
+	rasterCfg := ash.RasterizationRecreateConfig{
+		QueueFamilyIndex: 0,
+		PipelineOptions:  pipelineOptions,
+	}
+	clearValues := []vk.ClearValue{
+		vk.NewClearValue([]float32{0.098, 0.71, 0.996, 1}),
 	}
 
 	log.Println("Vulkan initialized, starting render loop")
 
+	// main loop
 	for !window.ShouldClose() {
 		glfw.PollEvents()
-		if window.GetAttrib(glfw.Iconified) != 1 {
-			if !drawFrame(device.Device, device.Queue, swapchain, cmdCtx, sync.Fence, sync.Semaphore) {
-				break
-			}
+		if window.GetAttrib(glfw.Iconified) == 1 {
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
-	}
-}
-
-func recordCommandBuffers(s asch.VulkanSwapchainInfo, rasterPass asch.RasterizationPass, cmdCtx asch.CommandContext,
-	buffer asch.VulkanBufferResource, gfx asch.PipelineRasterization,
-) error {
-	clearValues := []vk.ClearValue{
-		vk.NewClearValue([]float32{0.098, 0.71, 0.996, 1}),
-	}
-	cmdBuffers := cmdCtx.GetCmdBuffers()
-	for i := range cmdBuffers {
-		if err := vk.Error(vk.BeginCommandBuffer(cmdBuffers[i], &vk.CommandBufferBeginInfo{
-			SType: vk.StructureTypeCommandBufferBeginInfo,
-		})); err != nil {
-			return err
-		}
-		vk.CmdBeginRenderPass(cmdBuffers[i], &vk.RenderPassBeginInfo{
-			SType:       vk.StructureTypeRenderPassBeginInfo,
-			RenderPass:  rasterPass.GetRenderPass(),
-			Framebuffer: s.Framebuffers[i],
-			RenderArea: vk.Rect2D{
-				Extent: s.DisplaySize,
-			},
-			ClearValueCount: 1,
-			PClearValues:    clearValues,
-		}, vk.SubpassContentsInline)
-		vk.CmdBindPipeline(cmdBuffers[i], vk.PipelineBindPointGraphics, gfx.GetPipeline())
-		vk.CmdBindVertexBuffers(cmdBuffers[i], 0, 1, []vk.Buffer{buffer.Buffer}, []vk.DeviceSize{0})
-		vk.CmdDraw(cmdBuffers[i], 3, 1, 0, 0)
-		vk.CmdEndRenderPass(cmdBuffers[i])
-		if err := vk.Error(vk.EndCommandBuffer(cmdBuffers[i])); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func drawFrame(device vk.Device, queue vk.Queue, s asch.VulkanSwapchainInfo,
-	cmdCtx asch.CommandContext, fence vk.Fence, semaphore vk.Semaphore,
-) bool {
-	var nextIdx uint32
-
-	ret := vk.AcquireNextImage(device, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
-	if ret == vk.Suboptimal || ret == vk.ErrorOutOfDate {
-		log.Println("AcquireNextImage returned Suboptimal or ErrorOutOfDate")
-	}
-	if ret != vk.Success && ret != vk.Suboptimal {
-		if err := vk.Error(ret); err != nil {
+		imageIndex, ok, err := swapchainCtx.AcquireNextImageRasterization(windowSize, &rasterPass, &cmdCtx, &pipeline, rasterCfg, sync.Semaphore)
+		if err != nil {
 			log.Println("AcquireNextImage:", err)
+			break
 		}
-		return false
-	}
-
-	waitStages := []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)}
-	fences := []vk.Fence{fence}
-	semaphores := []vk.Semaphore{semaphore}
-	cmdBuffers := cmdCtx.GetCmdBuffers()
-
-	vk.ResetFences(device, 1, fences)
-	submitInfo := []vk.SubmitInfo{{
-		SType:              vk.StructureTypeSubmitInfo,
-		WaitSemaphoreCount: 1,
-		PWaitSemaphores:    semaphores,
-		PWaitDstStageMask:  waitStages,
-		CommandBufferCount: 1,
-		PCommandBuffers:    cmdBuffers[nextIdx:],
-	}}
-	if err := vk.Error(vk.QueueSubmit(queue, 1, submitInfo, fence)); err != nil {
-		log.Println("QueueSubmit:", err)
-		return false
-	}
-
-	const timeoutNano = 10 * 1000 * 1000 * 1000
-	if err := vk.Error(vk.WaitForFences(device, 1, fences, vk.True, timeoutNano)); err != nil {
-		log.Println("WaitForFences:", err)
-		return false
-	}
-
-	ret = vk.QueuePresent(queue, &vk.PresentInfo{
-		SType:          vk.StructureTypePresentInfo,
-		SwapchainCount: 1,
-		PSwapchains:    s.Swapchains,
-		PImageIndices:  []uint32{nextIdx},
-	})
-	if ret == vk.Suboptimal || ret == vk.ErrorOutOfDate {
-		log.Println("QueuePresent returned Suboptimal or ErrorOutOfDate")
-	}
-	if ret != vk.Success {
-		if err := vk.Error(ret); err != nil {
-			log.Println("QueuePresent:", err)
+		if !ok {
+			continue
 		}
-		return false
+
+		cmdBuffer, err := swapchainCtx.BeginRenderPass(imageIndex, &rasterPass, &cmdCtx, clearValues)
+		if err != nil {
+			log.Println("BeginRenderPass:", err)
+			break
+		}
+		cmdCtx.BindRasterPipeline(cmdBuffer, pipeline)
+		cmdCtx.BindVertexBuffers(cmdBuffer, 0, []vk.Buffer{buffer.Buffer}, []vk.DeviceSize{0})
+		cmdCtx.Draw(cmdBuffer, 3, 1, 0, 0)
+		if err := swapchainCtx.EndRenderPass(cmdBuffer); err != nil {
+			log.Println("EndRenderPass:", err)
+			break
+		}
+
+		if err := swapchainCtx.SubmitRender(cmdBuffer, sync.Fence, []vk.Semaphore{sync.Semaphore}); err != nil {
+			log.Println("SubmitRender:", err)
+			break
+		}
+		if err := swapchainCtx.PresentImageRasterization(windowSize, &rasterPass, &cmdCtx, &pipeline, rasterCfg, imageIndex); err != nil {
+			log.Println("PresentImage:", err)
+			break
+		}
 	}
-	return true
+}
+
+func waitForFramebufferSize(window *glfw.Window) vk.Extent2D {
+	width, height := window.GetFramebufferSize()
+	for width == 0 || height == 0 {
+		glfw.WaitEvents()
+		width, height = window.GetFramebufferSize()
+	}
+	return ash.NewExtentSize(width, height)
 }

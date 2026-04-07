@@ -135,7 +135,7 @@ func main() {
 		return vk.SurfaceFromPointer(surfPtr), nil
 	}
 
-	device, err := ash.NewDeviceWithOptions(appName, extensions, fff, 0, &ooo)
+	device, err := ash.NewDevice(appName, extensions, fff, 0, &ooo)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -215,14 +215,14 @@ func main() {
 	textureInfos := make([]vk.DescriptorImageInfo, len(model.Textures))
 	for i, tex := range model.Textures {
 		immutableTextureSamplers[i] = tex.GetSampler()
-		textureInfos[i] = vk.DescriptorImageInfo{Sampler: tex.GetSampler(), ImageView: tex.GetView(), ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal}
+		textureInfos[i] = tex.SampledDescriptorInfo()
 	}
 	rayHitStages := vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit)
 	desc, err := ash.NewDescriptorSets(dev, swapchainLen, []ash.DescriptorBinding{
 		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit), AccelerationStructure: tlas.AccelerationStructure},
-		&ash.BindingStorageImage{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), ImageView: storageImg.GetView()},
+		ash.NewBindingStorageImage(vk.ShaderStageFlags(vk.ShaderStageRaygenBit), &storageImg),
 		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit | vk.ShaderStageMissBit), Uniforms: &uniforms},
-		&ash.BindingImageSampler{StageFlags: rayHitStages, ImageView: textureInfos[0].ImageView, Sampler: textureInfos[0].Sampler, ImmutableSamplers: immutableFallbackSampler},
+		ash.NewBindingImageSampler(rayHitStages, &model.Textures[0], immutableFallbackSampler),
 		&ash.BindingStorageBuffer{StageFlags: rayHitStages, Buffer: model.GeometryBuffer.Buffer},
 		&ash.BindingImageSamplerArray{StageFlags: rayHitStages, ImageInfos: textureInfos, ImmutableSamplers: immutableTextureSamplers},
 	})
@@ -313,7 +313,7 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 
 // --- Helper functions ---
 
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.Display, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	rtPipeline *ash.PipelineRaytracing,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,

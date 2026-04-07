@@ -83,24 +83,21 @@ func main() {
 		PNext:                 unsafe.Pointer(&rtPipelineFeatures),
 	}
 
-	device, err := ash.NewDeviceWithOptions(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
-		surfPtr, err := window.CreateWindowSurface(instance, nil)
-		if err != nil {
-			return vk.NullSurface, err
-		}
-		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0, &ash.DeviceOptions{
+	newSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
+		return ash.NewDesktopSurface(instance, window)
+	}
+
+	deviceOptions := &ash.DeviceOptions{
 		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&asFeatures),
 		ApiVersion:       vk.MakeVersion(1, 2, 0),
-	})
+	}
+
+	manager, err := ash.NewManager(appName, extensions, newSurfaceFn, deviceOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&device)
-	dev := device.Device
-	gpu := device.GpuDevice
-	queue := device.Queue
+	cleanup.Add(&manager)
 
 	// Query RT pipeline properties (use hardcoded defaults, standard on all GPUs)
 	const shaderGroupHandleSize = 32
@@ -108,22 +105,22 @@ func main() {
 
 	// Create swapchain
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(dev, gpu, device.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&swapchain)
+	swapchainCtx := ash.NewSwapchainContext(&manager, &swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
-	cmdCtx, err := ash.NewCommandContext(dev, 0, swapchainLen)
+	cmdCtx, err := ash.NewCommandContext(manager.Device, 0, swapchainLen)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
-	rtx := ash.NewRaytracingContext(dev, gpu, queue, &cmdCtx)
+	rtx := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
 
 	// --- Create scene geometry (triangle) ---
-	// Triangle vertices: position (xyz)
 	vertices := []float32{
 		1.0, 1.0, 0.0,
 		-1.0, 1.0, 0.0,
@@ -131,25 +128,23 @@ func main() {
 	}
 	indices := []uint32{0, 1, 2}
 
-	// Create vertex buffer with device address
 	rtUsage := vk.BufferUsageFlags(vk.BufferUsageShaderDeviceAddressBit | vk.BufferUsageAccelerationStructureBuildInputReadOnlyBit | vk.BufferUsageStorageBufferBit)
-	vertexBuf, err := ash.NewBufferHostVisible(dev, gpu, vertices, true, rtUsage)
+	vertexBuf, err := ash.NewBufferHostVisible(manager.Device, manager.Gpu, vertices, true, rtUsage)
 	if err != nil {
 		log.Fatal("NewBufferHostVisible:", err)
 	}
 	cleanup.Add(&vertexBuf)
-	vertexAddr := vertexBuf.DeviceAddress
 
-	indexBuf, err := ash.NewBufferHostVisible(dev, gpu, indices, true, rtUsage)
+	indexBuf, err := ash.NewBufferHostVisible(manager.Device, manager.Gpu, indices, true, rtUsage)
 	if err != nil {
 		log.Fatal("NewBufferHostVisible:", err)
 	}
 	cleanup.Add(&indexBuf)
-	indexAddr := indexBuf.DeviceAddress
 
 	// --- Build BLAS ---
-	blas := buildBLAS(&rtx, vertexAddr, indexAddr, 3, 1)
+	blas := buildBLAS(&rtx, vertexBuf.DeviceAddress, indexBuf.DeviceAddress, 3, 1)
 	cleanup.Add(&blas)
+
 	// --- Build TLAS ---
 	tlas, err := rtx.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
 		Transform:           [12]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0},
@@ -163,32 +158,34 @@ func main() {
 		log.Fatal("NewTopLevelAccelerationStructure:", err)
 	}
 	cleanup.Add(&tlas)
+
 	// --- Create storage image ---
-	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
+	storageImg, err := ash.NewImageStorage(manager.Device, manager.Gpu, manager.Queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal("NewImageStorage:", err)
 	}
 	cleanup.Add(&storageImg)
 
 	// --- Uniform buffers ---
-	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
+	uniforms, err := ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&uniforms)
 
 	// --- Descriptors ---
-	desc, err := ash.NewDescriptorSets(dev, swapchainLen, []ash.DescriptorBinding{
+	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
 		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), AccelerationStructure: tlas.AccelerationStructure},
-		&ash.BindingStorageImage{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), ImageView: storageImg.GetView()},
+		ash.NewBindingStorageImage(vk.ShaderStageFlags(vk.ShaderStageRaygenBit), &storageImg),
 		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), Uniforms: &uniforms},
 	})
 	if err != nil {
 		log.Fatal("NewDescriptorSets:", err)
 	}
 	cleanup.Add(&desc)
+
 	// --- RT Pipeline ---
-	rtPipeline, err := ash.NewRTPipeline(dev, ash.RTPipelineOptions{
+	rtPipeline, err := ash.NewRTPipeline(manager.Device, ash.RTPipelineOptions{
 		Groups: []ash.RTShaderGroup{
 			{RaygenShader: raygenShaderCode},
 			{MissShader: missShaderCode},
@@ -200,15 +197,16 @@ func main() {
 		log.Fatal("NewRTPipeline:", err)
 	}
 	cleanup.Add(&rtPipeline)
+
 	// --- Shader Binding Table ---
-	sbt, err := ash.NewShaderBindingTable(dev, gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 1, 1, 0)
+	sbt, err := ash.NewShaderBindingTable(manager.Device, manager.Gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 1, 1, 0)
 	if err != nil {
 		log.Fatal("NewShaderBindingTable:", err)
 	}
 	cleanup.Add(&sbt)
 
 	// --- Sync objects ---
-	sync, err := ash.NewSyncObjects(dev)
+	sync, err := ash.NewSyncObjects(manager.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -224,29 +222,64 @@ func main() {
 
 	for !window.ShouldClose() {
 		glfw.PollEvents()
-		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
-			&rtPipeline, desc.GetSets(), &uniforms,
-			storageImg.GetImage(), &sbt,
-			&projMatrix, &viewMatrix) {
+
+		// Update uniform buffer with inverse matrices
+		projInv := ash.InvertMatrix(&projMatrix)
+		viewInv := ash.InvertMatrix(&viewMatrix)
+
+		imageIndex, acquired, err := swapchainCtx.AcquireNextImage(vk.MaxUint64, sync.Semaphore, vk.NullFence)
+		if err != nil {
+			log.Println("AcquireNextImage:", err)
+			break
+		}
+		if !acquired {
+			continue
+		}
+
+		ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv}
+		uniforms.Update(imageIndex, ubo.Bytes())
+
+		cmd, err := swapchainCtx.BeginFrame(imageIndex, &cmdCtx)
+		if err != nil {
+			log.Println("BeginFrame:", err)
+			break
+		}
+
+		// Bind RT pipeline and descriptors
+		vk.CmdBindPipeline(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetPipeline())
+		vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetLayout(), 0, 1, []vk.DescriptorSet{desc.GetSets()[imageIndex]}, 0, nil)
+
+		// Trace rays
+		vk.CmdTraceRays(cmd, &sbt.Raygen, &sbt.Miss, &sbt.Hit, &sbt.Callable, windowWidth, windowHeight, 1)
+
+		// Copy storage image to swapchain
+		swapchainCtx.GetSwapchain().CmdCopyToSwapchain(cmd, storageImg.GetImage(), imageIndex)
+
+		if err := swapchainCtx.EndFrame(cmd); err != nil {
+			log.Println("EndFrame:", err)
+			break
+		}
+		if err := swapchainCtx.SubmitRender(cmd, sync.Fence, []vk.Semaphore{sync.Semaphore}); err != nil {
+			log.Println("SubmitRender:", err)
+			break
+		}
+		if _, err := swapchainCtx.PresentImage(imageIndex, nil); err != nil {
+			log.Println("PresentImage:", err)
 			break
 		}
 	}
-
 }
 
 // --- Helper functions ---
 
-// setDeviceAddressConst writes a DeviceAddress into a DeviceOrHostAddressConst byte array
 func setDeviceAddressConst(addr *vk.DeviceOrHostAddressConst, da vk.DeviceAddress) {
 	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
 }
 
-// setDeviceAddress writes a DeviceAddress into a DeviceOrHostAddress byte array
 func setDeviceAddress(addr *vk.DeviceOrHostAddress, da vk.DeviceAddress) {
 	*(*vk.DeviceAddress)(unsafe.Pointer(&addr[0])) = da
 }
 
-// setGeometryTriangles writes AccelerationStructureGeometryTrianglesData into the union
 func setGeometryTriangles(data *vk.AccelerationStructureGeometryData, tri *vk.AccelerationStructureGeometryTrianglesData) {
 	cTri, _ := tri.PassRef()
 	src := unsafe.Slice((*byte)(unsafe.Pointer(cTri)), len(*data))
@@ -258,7 +291,7 @@ func buildBLAS(rtx *ash.RaytracingContext, vertexAddr, indexAddr vk.DeviceAddres
 	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
 	trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
 	setDeviceAddressConst(&trianglesData.VertexData, vertexAddr)
-	trianglesData.VertexStride = 12 // 3 floats * 4 bytes
+	trianglesData.VertexStride = 12
 	trianglesData.MaxVertex = maxVertex
 	trianglesData.IndexType = vk.IndexTypeUint32
 	setDeviceAddressConst(&trianglesData.IndexData, indexAddr)
@@ -277,60 +310,4 @@ func buildBLAS(rtx *ash.RaytracingContext, vertexAddr, indexAddr vk.DeviceAddres
 		log.Fatal("NewBottomLevelAccelerationStructure:", err)
 	}
 	return blas
-}
-
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
-	fence vk.Fence, semaphore vk.Semaphore,
-	rtPipeline *ash.PipelineRaytracing,
-	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
-	storageImage vk.Image,
-	sbt *ash.ShaderBindingTable,
-	proj, view *ash.Mat4x4,
-) bool {
-	var nextIdx uint32
-	cmdBuffers := cmdCtx.GetCmdBuffers()
-	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
-	if ret != vk.Success && ret != vk.Suboptimal {
-		return false
-	}
-
-	// Update uniform buffer with inverse matrices
-	projInv := ash.InvertMatrix(proj)
-	viewInv := ash.InvertMatrix(view)
-	ubo := uniformData{ViewInverse: viewInv, ProjInverse: projInv}
-	uniforms.Update(nextIdx, ubo.Bytes())
-
-	cmd := cmdBuffers[nextIdx]
-	vk.ResetCommandBuffer(cmd, 0)
-	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{SType: vk.StructureTypeCommandBufferBeginInfo})
-
-	// Bind RT pipeline and descriptors
-	vk.CmdBindPipeline(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetPipeline())
-	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointRayTracing, rtPipeline.GetLayout(), 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
-
-	// Trace rays
-	vk.CmdTraceRays(cmd, &sbt.Raygen, &sbt.Miss, &sbt.Hit, &sbt.Callable, windowWidth, windowHeight, 1)
-
-	// Copy storage image to swapchain
-	s.CmdCopyToSwapchain(cmd, storageImage, nextIdx)
-
-	vk.EndCommandBuffer(cmd)
-
-	vk.ResetFences(dev, 1, []vk.Fence{fence})
-	if err := vk.Error(vk.QueueSubmit(queue, 1, []vk.SubmitInfo{{
-		SType: vk.StructureTypeSubmitInfo, WaitSemaphoreCount: 1, PWaitSemaphores: []vk.Semaphore{semaphore},
-		PWaitDstStageMask:  []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)},
-		CommandBufferCount: 1, PCommandBuffers: cmdBuffers[nextIdx:],
-	}}, fence)); err != nil {
-		log.Println("QueueSubmit:", err)
-		return false
-	}
-	if err := vk.Error(vk.WaitForFences(dev, 1, []vk.Fence{fence}, vk.True, 10_000_000_000)); err != nil {
-		log.Println("WaitForFences:", err)
-		return false
-	}
-	ret = vk.QueuePresent(queue, &vk.PresentInfo{
-		SType: vk.StructureTypePresentInfo, SwapchainCount: 1, PSwapchains: s.Swapchains, PImageIndices: []uint32{nextIdx},
-	})
-	return ret == vk.Success || ret == vk.Suboptimal
 }

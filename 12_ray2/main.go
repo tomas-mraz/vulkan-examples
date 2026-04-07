@@ -106,7 +106,7 @@ func main() {
 		ShaderStorageImageWriteWithoutFormat: vk.True,
 	}
 
-	device, err := ash.NewDeviceWithOptions(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
+	device, err := ash.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
 		surfPtr, err := window.CreateWindowSurface(instance, nil)
 		if err != nil {
 			return vk.NullSurface, err
@@ -189,14 +189,14 @@ func main() {
 	textureInfos := make([]vk.DescriptorImageInfo, len(model.Textures))
 	for i, tex := range model.Textures {
 		immutableTextureSamplers[i] = tex.Sampler
-		textureInfos[i] = vk.DescriptorImageInfo{Sampler: tex.Sampler, ImageView: tex.View, ImageLayout: vk.ImageLayoutShaderReadOnlyOptimal}
+		textureInfos[i] = tex.SampledDescriptorInfo()
 	}
 	rayHitStages := vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit)
 	desc, err := ash.NewDescriptorSets(dev, swapchainLen, []ash.DescriptorBinding{
 		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit), AccelerationStructure: tlas.AccelerationStructure},
-		&ash.BindingStorageImage{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit), ImageView: storageImg.GetView()},
+		ash.NewBindingStorageImage(vk.ShaderStageFlags(vk.ShaderStageRaygenBit), &storageImg),
 		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit | vk.ShaderStageMissBit), Uniforms: &uniforms},
-		&ash.BindingImageSampler{StageFlags: rayHitStages, ImageView: textureInfos[0].ImageView, Sampler: textureInfos[0].Sampler, ImmutableSamplers: immutableFallbackSampler},
+		ash.NewBindingImageSampler(rayHitStages, &model.Textures[0], immutableFallbackSampler),
 		&ash.BindingStorageBuffer{StageFlags: rayHitStages, Buffer: model.GeometryBuffer.Buffer},
 		&ash.BindingImageSamplerArray{StageFlags: rayHitStages, ImageInfos: textureInfos, ImmutableSamplers: immutableTextureSamplers},
 	})
@@ -282,7 +282,7 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 	m[3][3] = 0
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.VulkanSwapchainInfo, cmdCtx *ash.CommandContext,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.Display, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	rtPipeline *ash.PipelineRaytracing,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
