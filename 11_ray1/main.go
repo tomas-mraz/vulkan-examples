@@ -128,6 +128,7 @@ func main() {
 	}
 	cleanup.Add(&cmdCtx)
 	rtContext := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
+	cleanup.Add(&rtContext)
 
 	// --- Create scene geometry (triangle) ---
 	vertices := []float32{
@@ -167,7 +168,6 @@ func main() {
 	if err != nil {
 		log.Fatal("NewBottomLevelAccelerationStructure:", err)
 	}
-	cleanup.Add(&blas)
 
 	// --- Build TLAS ---
 	tlas, err := rtContext.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
@@ -181,7 +181,6 @@ func main() {
 	if err != nil {
 		log.Fatal("NewTopLevelAccelerationStructure:", err)
 	}
-	cleanup.Add(&tlas)
 
 	// --- Create storage image ---
 	storageImg, err := ash.NewImageStorage(manager.Device, manager.Gpu, manager.Queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
