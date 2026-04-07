@@ -110,7 +110,6 @@ func main() {
 	newSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
 	}
-
 	deviceOptions := &ash.DeviceOptions{
 		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
@@ -124,17 +123,13 @@ func main() {
 	}
 	cleanup := ash.NewCleanup(&manager)
 	defer cleanup.Destroy()
-	cleanup.Add(&manager)
-	dev := manager.Device
-	gpu := manager.Gpu
-	queue := manager.Queue
 
 	// Check Vulkan 1.2 and HW ray tracing support
 	requiredVersion := vk.MakeVersion(1, 2, 0)
-	if ok, ver := ash.CheckDeviceApiVersion(gpu, requiredVersion); !ok {
+	if ok, ver := ash.CheckDeviceApiVersion(manager.Gpu, requiredVersion); !ok {
 		log.Fatalf("GPU supports Vulkan %s, but %s is required", vk.Version(ver), vk.Version(requiredVersion))
 	}
-	if ok, missing := ash.CheckDeviceExtensions(gpu, ash.RaytracingExtensions()); !ok {
+	if ok, missing := ash.CheckDeviceExtensions(manager.Gpu, ash.RaytracingExtensions()); !ok {
 		log.Fatalf("GPU does not support HW accelerated ray tracing, missing extensions: %v", missing)
 	}
 
@@ -144,20 +139,20 @@ func main() {
 
 	// Create swapchain
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(dev, gpu, manager.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
-	cmdCtx, err := ash.NewCommandContext(dev, 0, swapchainLen)
+	cmdCtx, err := ash.NewCommandContext(manager.Device, 0, swapchainLen)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
 
-	rtContext := ash.NewRaytracingContext(dev, gpu, queue, &cmdCtx)
+	rtContext := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
 	cleanup.Add(&rtContext)
 
 	// --- Load glTF model ---
@@ -165,6 +160,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&model)
 	log.Printf("Loaded %d primitives into one BLAS", len(model.Primitives))
 
 	// --- Build TLAS with one instance for the model BLAS ---
@@ -181,14 +177,14 @@ func main() {
 	}
 
 	// --- Create storage image ---
-	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
+	storageImg, err := ash.NewImageStorage(manager.Device, manager.Gpu, manager.Queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&storageImg)
 
 	// --- Uniform buffers ---
-	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
+	uniforms, err := ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -203,7 +199,7 @@ func main() {
 		textureInfos[i] = tex.SampledDescriptorInfo()
 	}
 	rayHitStages := vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit)
-	desc, err := ash.NewDescriptorSets(dev, swapchainLen, []ash.DescriptorBinding{
+	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
 		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit), AccelerationStructure: tlas.AccelerationStructure},
 		ash.NewBindingStorageImage(vk.ShaderStageFlags(vk.ShaderStageRaygenBit), &storageImg),
 		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit | vk.ShaderStageMissBit), Uniforms: &uniforms},
@@ -216,7 +212,7 @@ func main() {
 	}
 	cleanup.Add(&desc)
 	// --- RT Pipeline ---
-	rtPipeline, err := ash.NewRTPipeline(dev, ash.RTPipelineOptions{
+	rtPipeline, err := ash.NewRTPipeline(manager.Device, ash.RTPipelineOptions{
 		Groups: []ash.RTShaderGroup{
 			{RaygenShader: raygenShaderCode},
 			{MissShader: missShaderCode},
@@ -230,14 +226,14 @@ func main() {
 	}
 	cleanup.Add(&rtPipeline)
 	// --- Shader Binding Table ---
-	sbt, err := ash.NewShaderBindingTable(dev, gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
+	sbt, err := ash.NewShaderBindingTable(manager.Device, manager.Gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
 	if err != nil {
 		log.Fatal("NewShaderBindingTable:", err)
 	}
 	cleanup.Add(&sbt)
 
 	// --- Sync objects ---
-	sync, err := ash.NewSyncObjects(dev)
+	sync, err := ash.NewSyncObjects(manager.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -263,7 +259,7 @@ func main() {
 		lightPos := [4]float32{lightX, 0.15, lightZ, 0.0}
 		frameCounter = 0 // reset accumulation — light moved
 
-		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
+		if !drawFrame(manager.Device, manager.Queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
 			&rtPipeline, desc.GetSets(), &uniforms,
 			storageImg.GetImage(), &sbt,
 			&projMatrix, &viewMatrix, lightPos) {
@@ -298,7 +294,7 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 
 // --- Helper functions ---
 
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.Display, cmdCtx *ash.CommandContext,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	rtPipeline *ash.PipelineRaytracing,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,

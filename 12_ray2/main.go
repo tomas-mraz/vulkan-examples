@@ -106,13 +106,14 @@ func main() {
 	newSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
 	}
-	options := &ash.DeviceOptions{
+	deviceOptions := &ash.DeviceOptions{
 		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
 		EnabledFeatures:  &enabledFeatures,
 		ApiVersion:       vk.MakeVersion(1, 2, 0),
 	}
-	manager, err := ash.NewManager(appName, extensions, newSurfaceFn, options)
+
+	manager, err := ash.NewManager(appName, extensions, newSurfaceFn, deviceOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -146,6 +147,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup.Add(&model)
 	log.Printf("Loaded %d primitives into one BLAS", len(model.Primitives))
 
 	// --- Build TLAS with one instance for the model BLAS ---
@@ -162,14 +164,14 @@ func main() {
 	}
 
 	// --- Create storage image ---
-	storageImg, err := ash.NewImageStorage(dev, gpu, queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
+	storageImg, err := ash.NewImageStorage(manager.Device, manager.Gpu, manager.Queue, cmdCtx.GetCmdPool(), windowWidth, windowHeight, swapchain.DisplayFormat)
 	if err != nil {
 		log.Fatal("NewImageStorage:", err)
 	}
 	cleanup.Add(&storageImg)
 
 	// --- Uniform buffers ---
-	uniforms, err := ash.NewUniformBuffers(dev, gpu, swapchainLen, uniformSize)
+	uniforms, err := ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -185,7 +187,7 @@ func main() {
 		textureInfos[i] = tex.SampledDescriptorInfo()
 	}
 	rayHitStages := vk.ShaderStageFlags(vk.ShaderStageClosestHitBit | vk.ShaderStageAnyHitBit)
-	desc, err := ash.NewDescriptorSets(dev, swapchainLen, []ash.DescriptorBinding{
+	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
 		&ash.BindingAccelerationStructure{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit), AccelerationStructure: tlas.AccelerationStructure},
 		ash.NewBindingStorageImage(vk.ShaderStageFlags(vk.ShaderStageRaygenBit), &storageImg),
 		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageRaygenBit | vk.ShaderStageClosestHitBit | vk.ShaderStageMissBit), Uniforms: &uniforms},
@@ -198,7 +200,7 @@ func main() {
 	}
 	cleanup.Add(&desc)
 	// --- RT Pipeline ---
-	rtPipeline, err := ash.NewRTPipeline(dev, ash.RTPipelineOptions{
+	rtPipeline, err := ash.NewRTPipeline(manager.Device, ash.RTPipelineOptions{
 		Groups: []ash.RTShaderGroup{
 			{RaygenShader: raygenShaderCode},
 			{MissShader: missShaderCode},
@@ -212,14 +214,14 @@ func main() {
 	}
 	cleanup.Add(&rtPipeline)
 	// --- Shader Binding Table ---
-	sbt, err := ash.NewShaderBindingTable(dev, gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
+	sbt, err := ash.NewShaderBindingTable(manager.Device, manager.Gpu, rtPipeline.GetPipeline(), shaderGroupHandleSize, shaderGroupHandleAlignment, 1, 2, 1, 0)
 	if err != nil {
 		log.Fatal("NewShaderBindingTable:", err)
 	}
 	cleanup.Add(&sbt)
 
 	// --- Sync objects ---
-	sync, err := ash.NewSyncObjects(dev)
+	sync, err := ash.NewSyncObjects(manager.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -242,7 +244,7 @@ func main() {
 		rotatedView.Rotate(&viewMatrix, 0.0, 1.0, 0.0, ash.DegreesToRadians(elapsed))
 		frameCounter = 0 // reset accumulation — camera changed
 
-		if !drawFrame(dev, queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
+		if !drawFrame(manager.Device, manager.Queue, swapchain, &cmdCtx, sync.Fence, sync.Semaphore,
 			&rtPipeline, desc.GetSets(), &uniforms,
 			storageImg.GetImage(), &sbt,
 			&projMatrix, &rotatedView) {
@@ -275,7 +277,7 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 	m[3][3] = 0
 }
 
-func drawFrame(dev vk.Device, queue vk.Queue, s ash.Display, cmdCtx *ash.CommandContext,
+func drawFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	rtPipeline *ash.PipelineRaytracing,
 	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,

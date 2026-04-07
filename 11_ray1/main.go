@@ -84,7 +84,6 @@ func main() {
 	newSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
 	}
-
 	deviceOptions := &ash.DeviceOptions{
 		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&asFeatures),
