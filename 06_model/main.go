@@ -67,18 +67,16 @@ func main() {
 	log.Printf("Loaded model: %d vertices, %d indices", model.VertexCount(), model.IndexCount())
 
 	// Vulkan init
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
-
-	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
-	manager, err := ash.NewManager(appName, extensions, func(instance vk.Instance) (vk.Surface, error) {
+	newSurface := func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
-	}, nil)
+	}
+	manager, err := ash.NewManager(appName, extensions, newSurface, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&manager)
+	cleanup := ash.NewCleanup(&manager)
+	defer cleanup.Destroy()
 
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
@@ -149,7 +147,7 @@ func main() {
 	cleanup.Add(&desc)
 
 	// Pipeline
-	gfx, err := ash.NewPipelineRasterization(manager.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), ash.PipelineOptions{
+	pipeline, err := ash.NewPipelineRasterization(manager.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), ash.PipelineOptions{
 		VertShaderData: vertShaderCode,
 		FragShaderData: fragShaderCode,
 		VertexBindings: []vk.VertexInputBindingDescription{{
@@ -165,7 +163,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&gfx)
+	cleanup.Add(&pipeline)
 
 	sync, err := ash.NewSyncObjects(manager.Device)
 	if err != nil {
@@ -193,7 +191,7 @@ func main() {
 		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, ash.DegreesToRadians(elapsed))
 
 		if !drawFrame(manager.Device, manager.Queue, swapchain, rasterPass, cmdCtx,
-			sync.Fence, sync.Semaphore, gfx, desc.GetSets(), &uniforms,
+			sync.Fence, sync.Semaphore, pipeline, desc.GetSets(), &uniforms,
 			vertexBuf, indexBuf, uint32(len(model.Indices)),
 			&projMatrix, &viewMatrix, &modelMatrix) {
 			break

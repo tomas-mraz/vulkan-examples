@@ -59,16 +59,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
-
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
 	glfw.WindowHint(glfw.Resizable, glfw.False)
 	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(window)
+	defer window.Destroy()
 
 	extensions := window.GetRequiredInstanceExtensions()
 	createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
@@ -78,7 +75,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&manager)
+	cleanup := ash.NewCleanup(&manager)
+	defer cleanup.Destroy()
 
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)

@@ -61,9 +61,6 @@ func main() {
 	}
 	defer window.Destroy()
 
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
-
 	// Create device with ray tracing extensions
 	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -98,7 +95,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&manager)
+	cleanup := ash.NewCleanup(&manager)
+	defer cleanup.Destroy()
 
 	// Query RT pipeline properties (use hardcoded defaults, standard on all GPUs)
 	const shaderGroupHandleSize = 32

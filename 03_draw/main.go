@@ -46,9 +46,6 @@ func main() {
 	}
 	defer window.Destroy()
 
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
-
 	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 
@@ -60,7 +57,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&manager)
+	cleanup := ash.NewCleanup(&manager)
+	defer cleanup.Destroy()
 
 	windowSize := waitForFramebufferSize(window)
 	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)

@@ -75,7 +75,6 @@ func main() {
 	}
 	cleanup := ash.NewCleanup(&manager)
 	defer cleanup.Destroy()
-	cleanup.Add(&manager)
 
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
 	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)

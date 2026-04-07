@@ -67,16 +67,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
-
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
 	glfw.WindowHint(glfw.Resizable, glfw.False)
 	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(window)
+	defer window.Destroy()
 
 	// Create device with ray tracing extensions
 	ash.SetDebug(false)
@@ -125,6 +122,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup := ash.NewCleanup(&manager)
+	defer cleanup.Destroy()
 	cleanup.Add(&manager)
 	dev := manager.Device
 	gpu := manager.Gpu

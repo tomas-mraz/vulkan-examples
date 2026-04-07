@@ -71,9 +71,6 @@ func main() {
 	}
 	defer window.Destroy()
 
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
-
 	// Create device with ray tracing extensions
 	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
@@ -106,25 +103,21 @@ func main() {
 		ShaderStorageImageWriteWithoutFormat: vk.True,
 	}
 
-	device, err := ash.NewDevice(appName, extensions, func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
-		surfPtr, err := window.CreateWindowSurface(instance, nil)
-		if err != nil {
-			return vk.NullSurface, err
-		}
-		return vk.SurfaceFromPointer(surfPtr), nil
-	}, 0, &ash.DeviceOptions{
+	newSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
+		return ash.NewDesktopSurface(instance, window)
+	}
+	options := &ash.DeviceOptions{
 		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
 		EnabledFeatures:  &enabledFeatures,
 		ApiVersion:       vk.MakeVersion(1, 2, 0),
-	})
+	}
+	manager, err := ash.NewManager(appName, extensions, newSurfaceFn, options)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&device)
-	dev := device.Device
-	gpu := device.GpuDevice
-	queue := device.Queue
+	cleanup := ash.NewCleanup(&manager)
+	defer cleanup.Destroy()
 
 	// Query RT pipeline properties (use hardcoded defaults, standard on all GPUs)
 	const shaderGroupHandleSize = 32
@@ -132,20 +125,20 @@ func main() {
 
 	// Create swapchain
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(dev, gpu, device.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
-	cmdCtx, err := ash.NewCommandContext(dev, 0, swapchainLen)
+	cmdCtx, err := ash.NewCommandContext(manager.Device, 0, swapchainLen)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
 
-	rtContext := ash.NewRaytracingContext(dev, gpu, queue, &cmdCtx)
+	rtContext := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
 	cleanup.Add(&rtContext)
 
 	// --- Load glTF model ---
