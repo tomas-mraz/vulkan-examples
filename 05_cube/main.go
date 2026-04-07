@@ -123,8 +123,7 @@ func main() {
 		log.Fatal(err)
 	}
 	cleanup.Add(&texture)
-	ash.TransitionImageLayout(manager.Device, manager.Queue, cmdCtx.GetCmdPool(),
-		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
+	texture.TransitionLayout(manager.Queue, cmdCtx.GetCmdPool(), vk.ImageLayoutShaderReadOnlyOptimal)
 
 	// Uniform buffers (one per swapchain image) via framework
 	uniforms, err := ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformDataSize)

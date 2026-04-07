@@ -66,10 +66,6 @@ func main() {
 	log.Printf("Loaded model: %d vertices, %d indices, texture %dx%d", model.VertexCount(), model.IndexCount(), model.TextureWidth, model.TextureHeight)
 
 	// Vulkan init
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
-
-	ash.SetDebug(false)
 	extensions := window.GetRequiredInstanceExtensions()
 	manager, err := ash.NewManager(appName, extensions, func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
@@ -77,6 +73,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cleanup := ash.NewCleanup(&manager)
+	defer cleanup.Destroy()
 	cleanup.Add(&manager)
 
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
@@ -137,8 +135,7 @@ func main() {
 		log.Fatal(err)
 	}
 	cleanup.Add(&texture)
-	ash.TransitionImageLayout(manager.Device, manager.Queue, cmdCtx.GetCmdPool(),
-		texture.GetImage(), vk.ImageLayoutPreinitialized, vk.ImageLayoutShaderReadOnlyOptimal)
+	texture.TransitionLayout(manager.Queue, cmdCtx.GetCmdPool(), vk.ImageLayoutShaderReadOnlyOptimal)
 
 	// Uniform buffers
 	uniforms, err := ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uboSize)
@@ -150,7 +147,7 @@ func main() {
 	// Descriptors (UBO + texture)
 	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
 		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), Uniforms: &uniforms},
-		ash.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, []vk.Sampler{texture.GetSampler()}),
+		ash.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, nil),
 	})
 	if err != nil {
 		log.Fatal(err)
