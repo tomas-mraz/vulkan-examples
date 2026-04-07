@@ -67,30 +67,20 @@ func main() {
 		log.Fatal(err)
 	}
 
+	var cleanup ash.Cleanup
+	defer cleanup.Destroy()
+
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
 	glfw.WindowHint(glfw.Resizable, glfw.False)
 	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer window.Destroy()
-
-	var cleanup ash.Cleanup
-	defer cleanup.Destroy()
+	cleanup.Add(window)
 
 	// Create device with ray tracing extensions
 	ash.SetDebug(false)
-	extensions := window.GetRequiredInstanceExtensions()
-
-	_ = []string{
-		"VK_KHR_acceleration_structure\x00",
-		"VK_KHR_ray_tracing_pipeline\x00",
-		"VK_KHR_buffer_device_address\x00",
-		"VK_KHR_deferred_host_operations\x00",
-		"VK_EXT_descriptor_indexing\x00",
-		"VK_KHR_spirv_1_4\x00",
-		"VK_KHR_shader_float_controls\x00",
-	}
+	instanceExtensions := window.GetRequiredInstanceExtensions()
 
 	// Enable required features via pNext chain
 	bufferDeviceAddressFeatures := vk.PhysicalDeviceBufferDeviceAddressFeatures{
@@ -120,29 +110,25 @@ func main() {
 		ShaderStorageImageWriteWithoutFormat: vk.True,
 	}
 
-	ooo := ash.DeviceOptions{
+	newSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
+		return ash.NewDesktopSurface(instance, window)
+	}
+
+	deviceOptions := &ash.DeviceOptions{
 		DeviceExtensions: ash.RaytracingExtensions(),
 		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
 		EnabledFeatures:  &enabledFeatures,
 		ApiVersion:       vk.MakeVersion(1, 2, 0),
 	}
 
-	fff := func(instance vk.Instance, _ uintptr) (vk.Surface, error) {
-		surfPtr, err := window.CreateWindowSurface(instance, nil)
-		if err != nil {
-			return vk.NullSurface, err
-		}
-		return vk.SurfaceFromPointer(surfPtr), nil
-	}
-
-	device, err := ash.NewDevice(appName, extensions, fff, 0, &ooo)
+	manager, err := ash.NewManager(appName, instanceExtensions, newSurfaceFn, deviceOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup.Add(&device)
-	dev := device.Device
-	gpu := device.GpuDevice
-	queue := device.Queue
+	cleanup.Add(&manager)
+	dev := manager.Device
+	gpu := manager.Gpu
+	queue := manager.Queue
 
 	// Check Vulkan 1.2 and HW ray tracing support
 	requiredVersion := vk.MakeVersion(1, 2, 0)
@@ -159,7 +145,7 @@ func main() {
 
 	// Create swapchain
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(dev, gpu, device.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(dev, gpu, manager.Surface, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
