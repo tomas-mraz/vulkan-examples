@@ -127,7 +127,7 @@ func main() {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
-	rtx := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
+	rtContext := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
 
 	// --- Create scene geometry (triangle) ---
 	vertices := []float32{
@@ -151,11 +151,26 @@ func main() {
 	cleanup.Add(&indexBuf)
 
 	// --- Build BLAS ---
-	blas := buildBLAS(&rtx, vertexBuf.DeviceAddress, indexBuf.DeviceAddress, 3, 1)
+	geom := ash.NewTriangleGeometry(ash.TriangleGeometryDesc{
+		VertexAddress: vertexBuf.DeviceAddress,
+		VertexFormat:  vk.FormatR32g32b32Sfloat,
+		VertexStride:  12,
+		MaxVertex:     3,
+		IndexAddress:  indexBuf.DeviceAddress,
+		IndexType:     vk.IndexTypeUint32,
+		Flags:         vk.GeometryFlags(vk.GeometryOpaqueBit),
+	})
+	blas, err := rtContext.NewBottomLevelAccelerationStructure(
+		[]vk.AccelerationStructureGeometry{geom},
+		[]uint32{1},
+		vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit))
+	if err != nil {
+		log.Fatal("NewBottomLevelAccelerationStructure:", err)
+	}
 	cleanup.Add(&blas)
 
 	// --- Build TLAS ---
-	tlas, err := rtx.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
+	tlas, err := rtContext.NewTopLevelAccelerationStructure([]ash.TLASInstance{{
 		Transform:           [12]float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0},
 		InstanceCustomIndex: 0,
 		Mask:                0xFF,
@@ -303,30 +318,4 @@ func waitForFramebufferSize(window *glfw.Window) vk.Extent2D {
 		width, height = window.GetFramebufferSize()
 	}
 	return ash.NewExtentSize(width, height)
-}
-
-func buildBLAS(rtx *ash.RaytracingContext, vertexAddr, indexAddr vk.DeviceAddress, maxVertex, triangleCount uint32) ash.AccelerationStructure {
-	var trianglesData vk.AccelerationStructureGeometryTrianglesData
-	trianglesData.SType = vk.StructureTypeAccelerationStructureGeometryTrianglesData
-	trianglesData.VertexFormat = vk.FormatR32g32b32Sfloat
-	vk.SetDeviceAddressConst(&trianglesData.VertexData, vertexAddr)
-	trianglesData.VertexStride = 12
-	trianglesData.MaxVertex = maxVertex
-	trianglesData.IndexType = vk.IndexTypeUint32
-	vk.SetDeviceAddressConst(&trianglesData.IndexData, indexAddr)
-
-	var geometry vk.AccelerationStructureGeometry
-	geometry.SType = vk.StructureTypeAccelerationStructureGeometry
-	geometry.GeometryType = vk.GeometryTypeTriangles
-	geometry.Flags = vk.GeometryFlags(vk.GeometryOpaqueBit)
-	vk.SetGeometryTriangles(&geometry.Geometry, &trianglesData)
-
-	blas, err := rtx.NewBottomLevelAccelerationStructure(
-		[]vk.AccelerationStructureGeometry{geometry},
-		[]uint32{triangleCount},
-		vk.BuildAccelerationStructureFlags(vk.BuildAccelerationStructurePreferFastTraceBit))
-	if err != nil {
-		log.Fatal("NewBottomLevelAccelerationStructure:", err)
-	}
-	return blas
 }
