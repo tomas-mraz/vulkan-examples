@@ -1,0 +1,76 @@
+name: Build 01 (signed)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-01-macos-signed:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: 01_version
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.3.275.0
+          cache: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 01_version/go.mod
+          cache-dependency-path: 01_version/go.sum
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PWD=$(openssl rand -base64 32)
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          echo "$CERTIFICATE" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security import $RUNNER_TEMP/cert.p12 -P "$CERTIFICATE_PWD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+
+      - name: Build macOS binary
+        run: make build-macos
+        env:
+          CGO_LDFLAGS: "-L${{ env.VULKAN_SDK }}/lib"
+
+      - name: Sign binary
+        run: |
+          codesign --force --options runtime --sign "${{ secrets.MACOS_SIGNING_IDENTITY }}" 01_version_macos
+          codesign --verify --verbose 01_version_macos
+
+      - name: Notarize binary
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PWD: ${{ secrets.APPLE_APP_SPECIFIC_PWD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          zip 01_version_macos.zip 01_version_macos
+          xcrun notarytool submit 01_version_macos.zip \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PWD" \
+            --team-id "$TEAM_ID" \
+            --wait
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/signing.keychain-db
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 01_version-macos-signed
+          path: 01_version/01_version_macos
+          retention-days: 7
