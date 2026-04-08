@@ -1,0 +1,31 @@
+name: Build 08
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build-08-macos:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: 08_kosmic_krisp
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 08_kosmic_krisp/go.mod
+          cache-dependency-path: 08_kosmic_krisp/go.sum
+
+      - name: Build macOS binary
+        run: make build-apple
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 08_kosmic_krisp-macos
+          path: 08_kosmic_krisp/08_kosmic_krisp-macos
