@@ -18,8 +18,18 @@ Examples of using [tomas-mraz/vulkan](https://github.com/tomas-mraz/vulkan) Go b
 
 - Go 1.25+
 - Vulkan SDK (runtime + validation layers)
-- GLFW 3.3+ (Wayland) — for graphical examples
+- Vulkan runtime/loader
+- GLFW 3.3+ (Wayland)
 - glslang-tools — for shader compilation
+
+On macOS with Homebrew, install the loader separately:
+
+```bash
+brew install mesa vulkan-loader
+```
+
+`mesa` contains ICD driver KosmicKrisp
+`vulkan-loader` contains Vulkan loader vhich load KosmicKrisp driver
 
 ## Build
 
@@ -42,5 +52,4 @@ DiffuseTransmissionTeacup model using Diffuse Transmission extension.
 Credit:
 © 2023, Public domain. CC0 1.0 Universal
 - Polyhaven.com, and Eric Chadwick for Models and Textures
-
 

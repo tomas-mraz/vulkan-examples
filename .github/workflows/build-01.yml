@@ -1,14 +1,14 @@
-name: Build 08
+name: Build 01
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-08-macos:
+  build-01-macos:
     runs-on: macos-14
     defaults:
       run:
-        working-directory: 08_kosmic_krisp
+        working-directory: 01_version
 
     steps:
       - name: Checkout repository
@@ -23,17 +23,17 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: 08_kosmic_krisp/go.mod
-          cache-dependency-path: 08_kosmic_krisp/go.sum
+          go-version-file: 01_version/go.mod
+          cache-dependency-path: 01_version/go.sum
 
       - name: Build macOS binary
-        run: make build-apple
+        run: make build-macos
         env:
           CGO_LDFLAGS: "-L${{ env.VULKAN_SDK }}/lib"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 08_kosmic_krisp-macos
-          path: 08_kosmic_krisp/08_kosmic_krisp-macos
+          name: 01_version-macos
+          path: 01_version/01_version_macos
           retention-days: 7
