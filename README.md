@@ -21,6 +21,7 @@ Examples of using [tomas-mraz/vulkan](https://github.com/tomas-mraz/vulkan) Go b
 - Vulkan runtime/loader
 - GLFW 3.3+ (Wayland)
 - glslang-tools — for shader compilation
+- glslangValidator ... by měl být ve Vulkan SDK
 
 On macOS with Homebrew, install the loader separately:
 

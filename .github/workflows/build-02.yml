@@ -1,0 +1,39 @@
+name: Build 02
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-02-macos:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: 02_info
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.3.275.0
+          cache: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 02_info/go.mod
+          cache-dependency-path: 02_info/go.sum
+
+      - name: Build macOS binary
+        run: GOOS=darwin GOARCH=arm64 go build -o 02_info_macos .
+        env:
+          CGO_LDFLAGS: "-L${{ env.VULKAN_SDK }}/lib"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 02_info-macos
+          path: 02_info/02_info_macos
+          retention-days: 7

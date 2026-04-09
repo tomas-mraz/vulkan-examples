@@ -1,0 +1,39 @@
+name: Build 05
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-05-macos:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: 05_cube
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.3.275.0
+          cache: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 05_cube/go.mod
+          cache-dependency-path: 05_cube/go.sum
+
+      - name: Build macOS binary
+        run: make build-macos
+        env:
+          CGO_LDFLAGS: "-L${{ env.VULKAN_SDK }}/lib"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 05_cube-macos
+          path: 05_cube/05_cube_macos
+          retention-days: 7

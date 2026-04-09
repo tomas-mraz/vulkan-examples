@@ -1,28 +1,31 @@
-TAGS = wayland
-GLSLC = glslangValidator
+APP = 04_triangle
 SHADER_DIR = shaders
+LINUX_TAGS = -tags wayland
+GLSLC = glslangValidator
 
 SHADERS_SRC = $(wildcard $(SHADER_DIR)/*.vert $(SHADER_DIR)/*.frag)
 SHADERS_SPV = $(addsuffix .spv,$(SHADERS_SRC))
 
-.PHONY: build run shaders install-tools clean help
+.PHONY: build build-macos run shaders clean help
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
-build: shaders ## Build the application
-	go build -tags $(TAGS) -o 04_triangle .
+build: shaders ## Build the Linux application binary
+	go build $(LINUX_TAGS) -o $(APP) .
 
-run: shaders ## Build and run the application
-	go run -tags $(TAGS) .
+build-macos: shaders ## Build for macOS ARM64 (must run on macOS)
+	@test "$$(go env GOOS)" = "darwin" || (echo "Error: build-macos must run on macOS"; exit 1)
+	@test "$$(go env GOARCH)" = "arm64" || (echo "Error: build-macos requires arm64"; exit 1)
+	go build -o $(APP)_macos .
+
+run: shaders ## Run application on Linux
+	go run $(LINUX_TAGS) .
 
 shaders: $(SHADERS_SPV) ## Compile GLSL shaders to SPIR-V
 
 $(SHADER_DIR)/%.spv: $(SHADER_DIR)/%
 	$(GLSLC) -V $< -o $@
 
-install-tools: ## Install glslang-tools for shader compilation
-	sudo apt-get install -y glslang-tools
-
 clean: ## Remove binary and compiled shaders
-	rm -f 04_triangle $(SHADER_DIR)/*.spv
+	rm -f $(APP) $(SHADER_DIR)/*.spv
