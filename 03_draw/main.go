@@ -61,7 +61,7 @@ func main() {
 	defer cleanup.Destroy()
 
 	windowSize := waitForFramebufferSize(window)
-	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(&manager, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}

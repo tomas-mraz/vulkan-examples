@@ -103,7 +103,7 @@ func main() {
 
 	// Create swapchain
 	windowSize := waitForFramebufferSize(window)
-	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(&manager, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func main() {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
-	rtContext := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
+	rtContext := ash.NewRaytracingContext(&manager, &cmdCtx)
 	cleanup.Add(&rtContext)
 
 	// --- Create scene geometry (triangle) ---
@@ -195,7 +195,7 @@ func main() {
 
 	// --- Descriptors ---
 	rtStageFlags := vk.ShaderStageFlags(vk.ShaderStageRaygenBit)
-	descriptorBindingsFn := func(img *ash.ImageResource, ub *ash.VulkanUniformBuffers) []ash.DescriptorBinding {
+	descriptorBindingsFn := func(img *ash.ImageResource, ub *ash.UniformBuffers) []ash.DescriptorBinding {
 		return []ash.DescriptorBinding{
 			&ash.BindingAccelerationStructure{StageFlags: rtStageFlags, AccelerationStructure: tlas.AccelerationStructure},
 			ash.NewBindingStorageImage(rtStageFlags, img),

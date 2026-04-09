@@ -126,7 +126,7 @@ func main() {
 
 	// Create swapchain
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(&manager, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func main() {
 	}
 	cleanup.Add(&cmdCtx)
 
-	rtContext := ash.NewRaytracingContext(manager.Device, manager.Gpu, manager.Queue, &cmdCtx)
+	rtContext := ash.NewRaytracingContext(&manager, &cmdCtx)
 	cleanup.Add(&rtContext)
 
 	// --- Load glTF model ---
@@ -280,7 +280,7 @@ func setPerspectiveZO(m *ash.Mat4x4, yFov, aspect, near, far float32) {
 func drawFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain, cmdCtx *ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	rtPipeline *ash.PipelineRaytracing,
-	descSets []vk.DescriptorSet, uniforms *ash.VulkanUniformBuffers,
+	descSets []vk.DescriptorSet, uniforms *ash.UniformBuffers,
 	storageImage vk.Image,
 	sbt *ash.ShaderBindingTable,
 	proj, view *ash.Mat4x4,

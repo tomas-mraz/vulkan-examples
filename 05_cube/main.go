@@ -79,7 +79,7 @@ func main() {
 	defer cleanup.Destroy()
 
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(&manager, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func main() {
 	}
 }
 
-func updateUniformBuffer(uniforms *ash.VulkanUniformBuffers, index uint32, proj, view, model *ash.Mat4x4) {
+func updateUniformBuffer(uniforms *ash.UniformBuffers, index uint32, proj, view, model *ash.Mat4x4) {
 	var VP, MVP ash.Mat4x4
 	VP.Mult(proj, view)
 	MVP.Mult(&VP, model)
@@ -209,7 +209,7 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain,
 	rasterPass ash.RasterizationPass, cmdCtx ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx ash.PipelineRasterization, descSets []vk.DescriptorSet,
-	uniforms *ash.VulkanUniformBuffers,
+	uniforms *ash.UniformBuffers,
 	proj, view, model *ash.Mat4x4,
 ) bool {
 	var nextIdx uint32

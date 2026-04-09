@@ -77,7 +77,7 @@ func main() {
 	defer cleanup.Destroy()
 
 	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(manager.Device, manager.Gpu, manager.Surface, windowSize)
+	swapchain, err := ash.NewSwapchain(&manager, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func drawFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain,
 	rasterPass ash.RasterizationPass, cmdCtx ash.CommandContext,
 	fence vk.Fence, semaphore vk.Semaphore,
 	gfx ash.PipelineRasterization, descSets []vk.DescriptorSet,
-	uniforms *ash.VulkanUniformBuffers,
+	uniforms *ash.UniformBuffers,
 	vertexBuf ash.BufferResource, indexBuf ash.BufferResource, indexCount uint32,
 	proj, view, model *ash.Mat4x4,
 ) bool {
