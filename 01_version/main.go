@@ -33,7 +33,6 @@ func main() {
 		log.Fatal(err)
 	}
 	defer vk.DestroyInstance(instance, nil)
-	vk.InitInstance(instance)
 
 	// Enumerate physical devices
 	var count uint32
