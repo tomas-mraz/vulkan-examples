@@ -71,7 +71,7 @@ func main() {
 	newSurface := func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
 	}
-	manager, err := ash.NewManager(appName, extensions, newSurface, nil)
+	manager, err := ash.NewManager(appName, newSurface, &ash.DeviceOptions{InstanceExtensions: extensions})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -94,14 +94,13 @@ func start() {
 					window = event.Window
 					windowPtr := window.Ptr()
 
-					instanceExtensions := ash.AndroidInstanceExtensions()
 					createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
 						return ash.NewAndroidSurface(instance, windowPtr)
 					}
-					options := &ash.DeviceOptions{
-						DeviceExtensions: ash.AndroidDeviceExtensions(),
-					}
-					manager, err = ash.NewManager(appName, instanceExtensions, createSurfaceFn, options)
+					manager, err = ash.NewManager(appName, createSurfaceFn, &ash.DeviceOptions{
+						InstanceExtensions: ash.AndroidInstanceExtensions(),
+						DeviceExtensions:   ash.AndroidDeviceExtensions(),
+					})
 					if err != nil {
 						log.Fatal(err)
 					}

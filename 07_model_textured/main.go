@@ -67,9 +67,9 @@ func main() {
 
 	// Vulkan init
 	extensions := window.GetRequiredInstanceExtensions()
-	manager, err := ash.NewManager(appName, extensions, func(instance vk.Instance) (vk.Surface, error) {
+	manager, err := ash.NewManager(appName, func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
-	}, nil)
+	}, &ash.DeviceOptions{InstanceExtensions: extensions})
 	if err != nil {
 		log.Fatal(err)
 	}

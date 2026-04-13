@@ -18,7 +18,7 @@ func main() {
 	}
 
 	ash.SetDebug(false)
-	manager, err := ash.NewManager("VulkanInfo", nil, nil, nil)
+	manager, err := ash.NewManager("VulkanInfo", nil, nil)
 	if err != nil {
 		log.Fatal(err)
 	}

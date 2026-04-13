@@ -111,13 +111,14 @@ func main() {
 		return ash.NewDesktopSurface(instance, window)
 	}
 	deviceOptions := &ash.DeviceOptions{
-		DeviceExtensions: ash.RaytracingExtensions(),
-		PNextChain:       unsafe.Pointer(&descriptorIndexingFeatures),
-		EnabledFeatures:  &enabledFeatures,
-		ApiVersion:       vk.MakeVersion(1, 2, 0),
+		InstanceExtensions: instanceExtensions,
+		DeviceExtensions:   ash.RaytracingExtensions(),
+		PNextChain:         unsafe.Pointer(&descriptorIndexingFeatures),
+		EnabledFeatures:    &enabledFeatures,
+		ApiVersion:         vk.MakeVersion(1, 2, 0),
 	}
 
-	manager, err := ash.NewManager(appName, instanceExtensions, newSurfaceFn, deviceOptions)
+	manager, err := ash.NewManager(appName, newSurfaceFn, deviceOptions)
 	if err != nil {
 		log.Fatal(err)
 	}

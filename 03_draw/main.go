@@ -53,7 +53,7 @@ func main() {
 		return ash.NewDesktopSurface(instance, window)
 	}
 
-	manager, err := ash.NewManager(appName, extensions, createSurfaceFn, nil)
+	manager, err := ash.NewManager(appName, createSurfaceFn, &ash.DeviceOptions{InstanceExtensions: extensions})
 	if err != nil {
 		log.Fatal(err)
 	}

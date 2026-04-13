@@ -47,11 +47,12 @@ func start() {
 	defer window.Destroy()
 	pollEventsWindow = window
 
-	extensions := window.GetRequiredInstanceExtensions()
 	createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
 	}
-	manager, err := ash.NewManager(appName, extensions, createSurfaceFn, nil)
+	manager, err := ash.NewManager(appName, createSurfaceFn, &ash.DeviceOptions{
+		InstanceExtensions: window.GetRequiredInstanceExtensions(),
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
