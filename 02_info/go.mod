@@ -4,7 +4,7 @@ go 1.25.7
 
 require (
 	github.com/tomas-mraz/vulkan v0.0.0-20260408112747-a3ed9d78bc9e
-	github.com/tomas-mraz/vulkan-ash v0.0.0-20260407134500-edbf728a3e4c
+	github.com/tomas-mraz/vulkan-ash v0.0.0-20260410212646-da0736ce1140
 	github.com/xlab/tablewriter v0.0.0-20160610135559-80b567a11ad5
 )
 

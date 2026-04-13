@@ -1,17 +1,11 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
-	"image"
-	"image/draw"
-	"image/png"
 	"log"
-	"runtime"
 	"time"
 	"unsafe"
 
-	"github.com/go-gl/glfw/v3.3/glfw"
 	vk "github.com/tomas-mraz/vulkan"
 	"github.com/tomas-mraz/vulkan-ash"
 )
@@ -25,15 +19,7 @@ var fragShaderCode []byte
 //go:embed textures/gopher.png
 var gopherPng []byte
 
-const (
-	windowWidth  = 500
-	windowHeight = 500
-	appName      = "VulkanCube"
-)
-
-func init() {
-	runtime.LockOSThread()
-}
+const appName = "VulkanCube"
 
 // uniformData matches the shader's uniform buffer layout.
 type uniformData struct {
@@ -49,51 +35,35 @@ func (u *uniformData) Bytes() []byte {
 }
 
 func main() {
-	if err := glfw.Init(); err != nil {
-		log.Fatal(err)
-	}
-	defer glfw.Terminate()
+	start()
+}
 
-	vk.SetGetInstanceProcAddr(glfw.GetVulkanGetInstanceProcAddress())
-	if err := vk.Init(); err != nil {
-		log.Fatal(err)
-	}
-
-	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
-	glfw.WindowHint(glfw.Resizable, glfw.False)
-	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer window.Destroy()
-
-	extensions := window.GetRequiredInstanceExtensions()
-	createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
-		return ash.NewDesktopSurface(instance, window)
-	}
-	manager, err := ash.NewManager(appName, extensions, createSurfaceFn, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	cleanup := ash.NewCleanup(&manager)
-	defer cleanup.Destroy()
-
-	windowSize := ash.NewExtentSize(windowWidth, windowHeight)
-	swapchain, err := ash.NewSwapchain(&manager, windowSize)
+func initVulkanResources(manager *ash.Manager, cleanup *ash.Cleanup, width, height uint32) (
+	swapchain ash.Swapchain,
+	rasterPass ash.RasterizationPass,
+	cmdCtx ash.CommandContext,
+	texture ash.ImageResource,
+	uniforms ash.UniformBuffers,
+	desc ash.DescriptorInfo,
+	gfx ash.PipelineRasterization,
+	sync ash.SyncInfo,
+) {
+	windowSize := ash.NewExtentSize(int(width), int(height))
+	var err error
+	swapchain, err = ash.NewSwapchain(manager, windowSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
-	// Depth buffer via framework
-	depth, err := ash.NewImageDepth(manager.Device, manager.Gpu, windowWidth, windowHeight, vk.FormatD16Unorm)
+	depth, err := ash.NewImageDepth(manager.Device, manager.Gpu, width, height, vk.FormatD16Unorm)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&depth)
 
-	rasterPass, err := ash.NewRasterPassWithDepth(manager.Device, swapchain.DisplayFormat, depth.GetFormat())
+	rasterPass, err = ash.NewRasterPassWithDepth(manager.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -102,36 +72,31 @@ func main() {
 	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), depth.GetView()); err != nil {
 		log.Fatal(err)
 	}
-	cmdCtx, err := ash.NewCommandContext(manager.Device, 0, swapchainLen)
+	cmdCtx, err = ash.NewCommandContext(manager.Device, 0, swapchainLen)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&cmdCtx)
 
-	// Texture via framework
-	img, err := png.Decode(bytes.NewReader(gopherPng))
+	pixels, texW, texH, err := ash.DecodePNG(gopherPng)
 	if err != nil {
 		log.Fatal(err)
 	}
-	rgba := image.NewRGBA(img.Bounds())
-	draw.Draw(rgba, rgba.Bounds(), img, image.Point{}, draw.Src)
 
-	texture, err := ash.NewImageTexture(manager.Device, manager.Gpu, uint32(rgba.Bounds().Dx()), uint32(rgba.Bounds().Dy()), rgba.Pix)
+	texture, err = ash.NewImageTexture(manager.Device, manager.Gpu, texW, texH, pixels)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&texture)
 	texture.TransitionLayout(manager.Queue, cmdCtx.GetCmdPool(), vk.ImageLayoutShaderReadOnlyOptimal)
 
-	// Uniform buffers (one per swapchain image) via framework
-	uniforms, err := ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformDataSize)
+	uniforms, err = ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformDataSize)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&uniforms)
 
-	// Descriptor set layout + pool + sets
-	desc, err := ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
+	desc, err = ash.NewDescriptorSets(manager.Device, swapchainLen, []ash.DescriptorBinding{
 		&ash.BindingUniformBuffer{StageFlags: vk.ShaderStageFlags(vk.ShaderStageVertexBit), Uniforms: &uniforms},
 		ash.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, []vk.Sampler{texture.GetSampler()}),
 	})
@@ -140,8 +105,7 @@ func main() {
 	}
 	cleanup.Add(&desc)
 
-	// Pipeline
-	gfx, err := ash.NewPipelineRasterization(manager.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), ash.PipelineOptions{
+	gfx, err = ash.NewPipelineRasterization(manager.Device, swapchain.DisplaySize, rasterPass.GetRenderPass(), ash.PipelineOptions{
 		VertShaderData:       vertShaderCode,
 		FragShaderData:       fragShaderCode,
 		VertexBindings:       []vk.VertexInputBindingDescription{},
@@ -154,41 +118,13 @@ func main() {
 	}
 	cleanup.Add(&gfx)
 
-	// Sync objects
-	sync, err := ash.NewSyncObjects(manager.Device)
+	sync, err = ash.NewSyncObjects(manager.Device)
 	if err != nil {
 		log.Fatal(err)
 	}
 	cleanup.Add(&sync)
 
-	// Camera matrices
-	var projMatrix, viewMatrix, modelMatrix ash.Mat4x4
-	projMatrix.Perspective(ash.DegreesToRadians(45.0), 1.0, 0.1, 100.0)
-	viewMatrix.LookAt(&ash.Vec3{0.0, 3.0, 5.0}, &ash.Vec3{0.0, 0.0, 0.0}, &ash.Vec3{0.0, 1.0, 0.0})
-	modelMatrix.Identity()
-	projMatrix[1][1] *= -1 // Flip for Vulkan
-
-	log.Println("Vulkan initialized, starting render loop")
-	startTime := time.Now()
-
-	for !window.ShouldClose() {
-		glfw.PollEvents()
-
-		// Rotate model
-		elapsed := float32(time.Since(startTime).Seconds()) * 45.0 // 45 deg/sec
-		var rotated ash.Mat4x4
-		modelMatrix.Identity()
-		rotated.Dup(&modelMatrix)
-		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, ash.DegreesToRadians(elapsed))
-
-		if !drawCubeFrame(manager.Device, manager.Queue, swapchain, rasterPass, cmdCtx,
-			sync.Fence, sync.Semaphore,
-			gfx, desc.GetSets(),
-			&uniforms,
-			&projMatrix, &viewMatrix, &modelMatrix) {
-			break
-		}
-	}
+	return
 }
 
 func updateUniformBuffer(uniforms *ash.UniformBuffers, index uint32, proj, view, model *ash.Mat4x4) {
@@ -205,25 +141,26 @@ func updateUniformBuffer(uniforms *ash.UniformBuffers, index uint32, proj, view,
 	uniforms.Update(index, data.Bytes())
 }
 
-func drawCubeFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain,
-	rasterPass ash.RasterizationPass, cmdCtx ash.CommandContext,
-	fence vk.Fence, semaphore vk.Semaphore,
-	gfx ash.PipelineRasterization, descSets []vk.DescriptorSet,
-	uniforms *ash.UniformBuffers,
+func drawCubeFrame(ctx *ash.SwapchainContext, cmdCtx *ash.CommandContext,
+	rasterPass ash.RasterizationPass, gfx ash.PipelineRasterization,
+	descSets []vk.DescriptorSet, uniforms *ash.UniformBuffers,
+	syncObj ash.SyncInfo,
 	proj, view, model *ash.Mat4x4,
 ) bool {
-	var nextIdx uint32
-	ret := vk.AcquireNextImage(dev, s.DefaultSwapchain(), vk.MaxUint64, semaphore, vk.NullFence, &nextIdx)
-	if ret != vk.Success && ret != vk.Suboptimal {
+	s := ctx.GetSwapchain()
+
+	nextIdx, acquired, err := ctx.AcquireNextImage(vk.MaxUint64, syncObj.Semaphore, vk.NullFence)
+	if err != nil || !acquired {
 		return false
 	}
 
-	// Update uniform buffer for this frame
 	updateUniformBuffer(uniforms, nextIdx, proj, view, model)
 
-	cmd := cmdCtx.GetCmdBuffers()[nextIdx]
-	vk.ResetCommandBuffer(cmd, 0)
-	vk.BeginCommandBuffer(cmd, &vk.CommandBufferBeginInfo{SType: vk.StructureTypeCommandBufferBeginInfo})
+	cmd, err := ctx.BeginFrame(nextIdx, cmdCtx)
+	if err != nil {
+		log.Println("BeginFrame:", err)
+		return false
+	}
 
 	clearValues := make([]vk.ClearValue, 2)
 	clearValues[0].SetColor([]float32{0.2, 0.2, 0.2, 1.0})
@@ -239,26 +176,65 @@ func drawCubeFrame(dev vk.Device, queue vk.Queue, s ash.Swapchain,
 	vk.CmdBindDescriptorSets(cmd, vk.PipelineBindPointGraphics, gfx.GetLayout(), 0, 1, []vk.DescriptorSet{descSets[nextIdx]}, 0, nil)
 	vk.CmdDraw(cmd, 36, 1, 0, 0)
 	vk.CmdEndRenderPass(cmd)
-	vk.EndCommandBuffer(cmd)
 
-	vk.ResetFences(dev, 1, []vk.Fence{fence})
-	if err := vk.Error(vk.QueueSubmit(queue, 1, []vk.SubmitInfo{{
-		SType: vk.StructureTypeSubmitInfo, WaitSemaphoreCount: 1, PWaitSemaphores: []vk.Semaphore{semaphore},
-		PWaitDstStageMask:  []vk.PipelineStageFlags{vk.PipelineStageFlags(vk.PipelineStageColorAttachmentOutputBit)},
-		CommandBufferCount: 1, PCommandBuffers: cmdCtx.GetCmdBuffers()[nextIdx:],
-	}}, fence)); err != nil {
-		log.Println("QueueSubmit:", err)
-		return false
-	}
-	if err := vk.Error(vk.WaitForFences(dev, 1, []vk.Fence{fence}, vk.True, 10_000_000_000)); err != nil {
-		log.Println("WaitForFences:", err)
+	if err := ctx.EndFrame(cmd); err != nil {
+		log.Println("EndFrame:", err)
 		return false
 	}
 
-	ret = vk.QueuePresent(queue, &vk.PresentInfo{
-		SType: vk.StructureTypePresentInfo, SwapchainCount: 1, PSwapchains: s.Swapchains, PImageIndices: []uint32{nextIdx},
-	})
-	return ret == vk.Success || ret == vk.Suboptimal
+	if err := ctx.SubmitRender(cmd, syncObj.Fence, []vk.Semaphore{syncObj.Semaphore}); err != nil {
+		log.Println("SubmitRender:", err)
+		return false
+	}
+
+	presented, err := ctx.PresentImage(nextIdx, nil)
+	if err != nil {
+		log.Println("PresentImage:", err)
+		return false
+	}
+	return presented
+}
+
+func renderLoop(ctx *ash.SwapchainContext, cmdCtx *ash.CommandContext,
+	rasterPass ash.RasterizationPass, gfx ash.PipelineRasterization,
+	desc ash.DescriptorInfo, uniforms *ash.UniformBuffers,
+	syncObj ash.SyncInfo,
+) {
+	size := ctx.GetSwapchain().DisplaySize
+	aspectRatio := float32(size.Width) / float32(size.Height)
+
+	preRotation := ctx.GetSwapchain().PreRotationMatrix()
+
+	var projMatrix, viewMatrix, modelMatrix ash.Mat4x4
+	projMatrix.Perspective(ash.DegreesToRadians(45.0), aspectRatio, 0.1, 100.0)
+	viewMatrix.LookAt(&ash.Vec3{0.0, 3.0, 5.0}, &ash.Vec3{0.0, 0.0, 0.0}, &ash.Vec3{0.0, 1.0, 0.0})
+	modelMatrix.Identity()
+	projMatrix[1][1] *= -1 // Flip for Vulkan
+
+	// Apply pre-rotation to projection matrix (handles Android surface rotation)
+	var rotatedProj ash.Mat4x4
+	rotatedProj.Mult(&preRotation, &projMatrix)
+	projMatrix = rotatedProj
+
+	log.Println("Vulkan initialized, starting render loop")
+	startTime := time.Now()
+
+	for {
+		if !pollEvents() {
+			break
+		}
+
+		elapsed := float32(time.Since(startTime).Seconds()) * 45.0 // 45 deg/sec
+		var rotated ash.Mat4x4
+		modelMatrix.Identity()
+		rotated.Dup(&modelMatrix)
+		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, ash.DegreesToRadians(elapsed))
+
+		if !drawCubeFrame(ctx, cmdCtx, rasterPass, gfx, desc.GetSets(), uniforms, syncObj,
+			&projMatrix, &viewMatrix, &modelMatrix) {
+			break
+		}
+	}
 }
 
 // Cube vertex data (36 vertices = 12 triangles = 6 faces)
