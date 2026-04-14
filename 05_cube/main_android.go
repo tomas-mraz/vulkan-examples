@@ -31,30 +31,54 @@ func start() {
 		a.InitDone()
 
 		var (
-			manager ash.Manager
-			cleanup ash.Cleanup
-			window  *android.NativeWindow
-			err     error
+			manager        ash.Manager
+			managerCleanup ash.Cleanup
+			renderCleanup  ash.Cleanup
+			window         *android.NativeWindow
+			hasManager     bool
+			err            error
 		)
 
 		stopRender := func() {
 			if renderRunning.Load() {
 				renderRunning.Store(false)
-				vk.DeviceWaitIdle(manager.Device)
+				if hasManager {
+					vk.DeviceWaitIdle(manager.Device)
+				}
 			}
 		}
 
+		destroyRenderResources := func() {
+			stopRender()
+			renderCleanup.Destroy()
+			renderCleanup = ash.NewCleanup()
+		}
+
+		destroyManager := func() {
+			destroyRenderResources()
+			if hasManager {
+				managerCleanup.Destroy()
+				managerCleanup = ash.NewCleanup()
+				manager = ash.Manager{}
+				hasManager = false
+			}
+			window = nil
+		}
+
 		startRender := func() {
+			if window == nil || !hasManager {
+				return
+			}
+
+			destroyRenderResources()
+
 			width := uint32(android.NativeWindowGetWidth(window))
 			height := uint32(android.NativeWindowGetHeight(window))
 			if width == 0 || height == 0 {
 				width, height = 640, 480
 			}
 
-			//cleanup.Destroy()
-			//cleanup = ash.NewCleanup(&manager)
-
-			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj := initVulkanResources(&manager, &cleanup, width, height)
+			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj := initVulkanResources(&manager, &renderCleanup, width, height)
 
 			// Some Android Vulkan stacks advertise the extension but expose an invalid
 			// vkGetRefreshCycleDurationGOOGLE entry point, which crashes inside cgo.
@@ -71,8 +95,7 @@ func start() {
 			case event := <-a.LifecycleEvents():
 				switch event.Kind {
 				case app.OnDestroy:
-					stopRender()
-					cleanup.Destroy()
+					destroyManager()
 					return
 				}
 
@@ -87,6 +110,8 @@ func start() {
 			case event := <-nativeWindowEvents:
 				switch event.Kind {
 				case app.NativeWindowCreated:
+					destroyManager()
+
 					err = vk.SetDefaultGetInstanceProcAddr()
 					if err != nil {
 						log.Fatal(err)
@@ -107,17 +132,18 @@ func start() {
 						log.Fatal(err)
 					}
 
-					cleanup = ash.NewCleanup(&manager)
+					hasManager = true
+					managerCleanup = ash.NewCleanup()
+					managerCleanup.Add(&manager)
+					renderCleanup = ash.NewCleanup()
 					log.Println("Vulkan initialized on Android")
 					startRender()
 
 				case app.NativeWindowDestroyed:
-					stopRender()
-					cleanup.Destroy()
-					window = nil
+					destroyManager()
 
 				case app.NativeWindowRedrawNeeded:
-					stopRender()
+					window = event.Window
 					startRender()
 					a.NativeWindowRedrawDone()
 				}

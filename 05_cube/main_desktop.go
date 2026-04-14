@@ -39,7 +39,7 @@ func start() {
 	}
 
 	glfw.WindowHint(glfw.ClientAPI, glfw.NoAPI)
-	glfw.WindowHint(glfw.Resizable, glfw.False)
+	//glfw.WindowHint(glfw.Resizable, glfw.False)
 	window, err := glfw.CreateWindow(windowWidth, windowHeight, appName, nil, nil)
 	if err != nil {
 		log.Fatal(err)
@@ -58,7 +58,8 @@ func start() {
 		log.Fatal(err)
 	}
 
-	cleanup := ash.NewCleanup(&manager)
+	cleanup := ash.NewCleanup()
+	cleanup.Add(&manager)
 	defer cleanup.Destroy()
 
 	swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj :=
