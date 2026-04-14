@@ -4,5 +4,5 @@ github.com/go-test/deep v1.0.1 h1:UQhStjbkDClarlmv0am7OXXO4/GaPdCGiUiMTvi28sg=
 github.com/go-test/deep v1.0.1/go.mod h1:wGDj63lr65AM2AQyKZd/NYHGb0R+1RLqB8NKt3aSFNA=
 github.com/qmuntal/gltf v0.28.0 h1:C4A1temWMPtcI2+qNfpfRq8FEJxoBGUN3ZZM8BCc+xU=
 github.com/qmuntal/gltf v0.28.0/go.mod h1:YoXZOt0Nc0kIfSKOLZIRoV4FycdC+GzE+3JgiAGYoMs=
-github.com/tomas-mraz/vulkan v0.0.0-20260408112747-a3ed9d78bc9e h1:CSCduX7kywdHtfohsYqBYfXGgR2eQW7w4kf92wDUwSQ=
-github.com/tomas-mraz/vulkan v0.0.0-20260408112747-a3ed9d78bc9e/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=
+github.com/tomas-mraz/vulkan v0.0.0-20260414123201-a9f311e4c373 h1:eNFY06rQ8lKGcqIaeASKUvTlKe1PGYlAvcCWRxtXrUs=
+github.com/tomas-mraz/vulkan v0.0.0-20260414123201-a9f311e4c373/go.mod h1:7CuXD9pJzuWKIPDk/nWssR8sNSbS7Xj+asL6WXQ8+Qw=

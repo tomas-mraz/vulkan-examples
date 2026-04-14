@@ -3,8 +3,8 @@ module vulkan-examples/02_info
 go 1.25.7
 
 require (
-	github.com/tomas-mraz/vulkan v0.0.0-20260408112747-a3ed9d78bc9e
-	github.com/tomas-mraz/vulkan-ash v0.0.0-20260410212646-da0736ce1140
+	github.com/tomas-mraz/vulkan v0.0.0-20260414123201-a9f311e4c373
+	github.com/tomas-mraz/vulkan-ash v0.0.0-20260414123617-9f10f8d444ac
 	github.com/xlab/tablewriter v0.0.0-20160610135559-80b567a11ad5
 )
 
