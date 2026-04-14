@@ -57,8 +57,7 @@ func start() {
 			cleanup.Destroy()
 			cleanup = ash.NewCleanup(&manager)
 
-			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj :=
-				initVulkanResources(&manager, &cleanup, width, height)
+			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj := initVulkanResources(&manager, &cleanup, width, height)
 
 			dt := ash.NewDisplayTiming(manager.Device, swapchain.DefaultSwapchain())
 			ctx := ash.NewSwapchainContext(&manager, &swapchain)
@@ -97,10 +96,7 @@ func start() {
 					createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
 						return ash.NewAndroidSurface(instance, windowPtr)
 					}
-					manager, err = ash.NewManager(appName, createSurfaceFn, &ash.DeviceOptions{
-						InstanceExtensions: ash.AndroidInstanceExtensions(),
-						DeviceExtensions:   ash.AndroidDeviceExtensions(),
-					})
+					manager, err = ash.NewManager(appName, createSurfaceFn, nil)
 					if err != nil {
 						log.Fatal(err)
 					}

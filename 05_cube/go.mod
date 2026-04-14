@@ -11,5 +11,6 @@ require (
 
 require github.com/qmuntal/gltf v0.28.0 // indirect
 
-//replace github.com/tomas-mraz/vulkan-ash => /home/tomas/git-osobni-github/vulkan-ash
+replace github.com/tomas-mraz/vulkan => /home/tomas/git-osobni-github/vulkan-goki_fork
+replace github.com/tomas-mraz/vulkan-ash => /home/tomas/git-osobni-github/vulkan-ash
 //replace github.com/tomas-mraz/android-go => /home/tomas/git-osobni-github/android-go_fork
