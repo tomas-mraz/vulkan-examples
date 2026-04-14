@@ -75,9 +75,7 @@ func main() {
 	}
 	defer window.Destroy()
 
-	// Create device with ray tracing extensions
 	ash.SetDebug(false)
-	instanceExtensions := window.GetRequiredInstanceExtensions()
 
 	// Enable required features via pNext chain
 	bufferDeviceAddressFeatures := vk.PhysicalDeviceBufferDeviceAddressFeatures{
@@ -111,13 +109,14 @@ func main() {
 		return ash.NewDesktopSurface(instance, window)
 	}
 	deviceOptions := &ash.DeviceOptions{
-		InstanceExtensions: instanceExtensions,
-		DeviceExtensions:   ash.RaytracingExtensions(),
+		InstanceExtensions: window.GetRequiredInstanceExtensions(),
+		DeviceExtensions:   ash.RaytracingDeviceExtensions(),
 		PNextChain:         unsafe.Pointer(&descriptorIndexingFeatures),
 		EnabledFeatures:    &enabledFeatures,
 		ApiVersion:         vk.MakeVersion(1, 2, 0),
 	}
 
+	// Create device with ray tracing extensions
 	manager, err := ash.NewManager(appName, newSurfaceFn, deviceOptions)
 	if err != nil {
 		log.Fatal(err)
@@ -125,12 +124,12 @@ func main() {
 	cleanup := ash.NewCleanup(&manager)
 	defer cleanup.Destroy()
 
-	// Check Vulkan 1.2 and HW ray tracing support
+	//TODO check is AFTER creating manager with required version Vulkan 1.2 ... so it is strange to check it now
 	requiredVersion := vk.MakeVersion(1, 2, 0)
 	if ok, ver := ash.CheckDeviceApiVersion(manager.Gpu, requiredVersion); !ok {
 		log.Fatalf("GPU supports Vulkan %s, but %s is required", vk.Version(ver), vk.Version(requiredVersion))
 	}
-	if ok, missing := ash.CheckDeviceExtensions(manager.Gpu, ash.RaytracingExtensions()); !ok {
+	if ok, missing := ash.CheckDeviceExtensions(manager.Gpu, ash.RaytracingDeviceExtensions()); !ok {
 		log.Fatalf("GPU does not support HW accelerated ray tracing, missing extensions: %v", missing)
 	}
 

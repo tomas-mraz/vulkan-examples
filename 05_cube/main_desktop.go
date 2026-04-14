@@ -50,6 +50,7 @@ func start() {
 	createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
 		return ash.NewDesktopSurface(instance, window)
 	}
+
 	manager, err := ash.NewManager(appName, createSurfaceFn, &ash.DeviceOptions{
 		InstanceExtensions: window.GetRequiredInstanceExtensions(),
 	})

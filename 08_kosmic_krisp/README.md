@@ -1,6 +1,6 @@
 # Kosmic Krisp
 
-Kopie `04_triangle` upravená tak, aby stejná aplikace fungovala i na Apple macOS přes MoltenVK portability vrstvu.
+Kopie `04_triangle` upravená tak, aby stejná aplikace fungovala i na Apple macOS přes KosmicKrisp ICD ovladač.
 
 Vykresluje rotující modrý trojúhelník na černém pozadí pomocí GLFW, `github.com/tomas-mraz/vulkan` a `github.com/tomas-mraz/vulkan-ash`.
 

@@ -61,9 +61,7 @@ func main() {
 	}
 	defer window.Destroy()
 
-	// Create device with ray tracing extensions
 	ash.SetDebug(false)
-	extensions := window.GetRequiredInstanceExtensions()
 
 	// Enable required features via pNext chain
 	bufferDeviceAddressFeatures := vk.PhysicalDeviceBufferDeviceAddressFeatures{
@@ -85,12 +83,13 @@ func main() {
 		return ash.NewDesktopSurface(instance, window)
 	}
 	deviceOptions := &ash.DeviceOptions{
-		InstanceExtensions: extensions,
-		DeviceExtensions:   ash.RaytracingExtensions(),
+		InstanceExtensions: window.GetRequiredInstanceExtensions(),
+		DeviceExtensions:   ash.RaytracingDeviceExtensions(),
 		PNextChain:         unsafe.Pointer(&asFeatures),
 		ApiVersion:         vk.MakeVersion(1, 2, 0),
 	}
 
+	// Create device with ray tracing extensions
 	manager, err := ash.NewManager(appName, newSurfaceFn, deviceOptions)
 	if err != nil {
 		log.Fatal(err)

@@ -35,6 +35,8 @@ func (u *uniformData) Bytes() []byte {
 }
 
 func main() {
+	ash.SetDebug(false)
+
 	start()
 }
 
@@ -220,6 +222,7 @@ func renderLoop(ctx *ash.SwapchainContext, cmdCtx *ash.CommandContext,
 	startTime := time.Now()
 
 	for {
+		// [desktop/android] specific breaking loop (and desktop event check)
 		if !pollEvents() {
 			break
 		}
@@ -230,8 +233,7 @@ func renderLoop(ctx *ash.SwapchainContext, cmdCtx *ash.CommandContext,
 		rotated.Dup(&modelMatrix)
 		modelMatrix.Rotate(&rotated, 0.0, 1.0, 0.0, ash.DegreesToRadians(elapsed))
 
-		if !drawCubeFrame(ctx, cmdCtx, rasterPass, gfx, desc.GetSets(), uniforms, syncObj,
-			&projMatrix, &viewMatrix, &modelMatrix) {
+		if !drawCubeFrame(ctx, cmdCtx, rasterPass, gfx, desc.GetSets(), uniforms, syncObj, &projMatrix, &viewMatrix, &modelMatrix) {
 			break
 		}
 	}
