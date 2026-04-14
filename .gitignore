@@ -9,15 +9,6 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-*.coverprofile
-profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
 # Go workspace file
 go.work
 go.work.sum
@@ -31,3 +22,17 @@ go.work.sum
 
 # AI agents
 .claude
+
+# binaries
+01_version
+02_info
+03_draw
+04_triangle
+05_cube
+06_model
+07_model
+07_model_textured
+08_kosmic_krisp
+11_ray1
+12_ray2
+13_ray3
