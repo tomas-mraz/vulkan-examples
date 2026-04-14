@@ -23,10 +23,6 @@ func start() {
 	inputQueueChan := make(chan *android.InputQueue, 1)
 
 	app.Main(func(a app.NativeActivity) {
-		if err := vk.Init(); err != nil {
-			log.Fatal(err)
-		}
-
 		a.HandleNativeWindowEvents(nativeWindowEvents)
 		a.HandleInputQueueEvents(inputQueueEvents)
 		go app.HandleInputQueues(inputQueueChan, func() {
@@ -38,6 +34,7 @@ func start() {
 			manager ash.Manager
 			cleanup ash.Cleanup
 			window  *android.NativeWindow
+			err     error
 		)
 
 		stopRender := func() {
@@ -54,14 +51,15 @@ func start() {
 				width, height = 640, 480
 			}
 
-			cleanup.Destroy()
-			cleanup = ash.NewCleanup(&manager)
+			//cleanup.Destroy()
+			//cleanup = ash.NewCleanup(&manager)
 
 			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj := initVulkanResources(&manager, &cleanup, width, height)
 
-			dt := ash.NewDisplayTiming(manager.Device, swapchain.DefaultSwapchain())
+			// Some Android Vulkan stacks advertise the extension but expose an invalid
+			// vkGetRefreshCycleDurationGOOGLE entry point, which crashes inside cgo.
+			// Keep frame pacing disabled here until the wrapper can verify proc availability.
 			ctx := ash.NewSwapchainContext(&manager, &swapchain)
-			ctx.SetDisplayTiming(&dt)
 
 			renderRunning.Store(true)
 
@@ -89,7 +87,15 @@ func start() {
 			case event := <-nativeWindowEvents:
 				switch event.Kind {
 				case app.NativeWindowCreated:
-					var err error
+					err = vk.SetDefaultGetInstanceProcAddr()
+					if err != nil {
+						log.Fatal(err)
+					}
+					err = vk.Init()
+					if err != nil {
+						log.Fatal(err)
+					}
+
 					window = event.Window
 					windowPtr := window.Ptr()
 

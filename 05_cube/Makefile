@@ -7,7 +7,7 @@ SHADERS_SRC = $(wildcard $(SHADER_DIR)/*.vert $(SHADER_DIR)/*.frag)
 SHADERS_SPV = $(addsuffix .spv,$(SHADERS_SRC))
 
 # Android NDK toolchain (set NDK to your NDK root, or use standalone toolchain)
-ANDROID_API ?= 33
+ANDROID_API ?= 34
 NDK_TOOLCHAIN ?= $(ANDROID_HOME)/ndk/$(shell ls $(ANDROID_HOME)/ndk 2>/dev/null | tail -1)/toolchains/llvm/prebuilt/linux-x86_64/bin
 
 JNILIBS = android/app/src/main/jniLibs
@@ -66,3 +66,12 @@ clean: ## Remove binary, compiled shaders, and Android build artifacts
 	rm -f $(APP) $(SHADER_DIR)/*.spv
 	rm -rf $(JNILIBS)/arm64-v8a $(JNILIBS)/x86_64
 	cd android && ./gradlew clean 2>/dev/null || true
+
+android-install:
+	cd ./android/app/build/outputs/apk/debug && adb install app-x86_64-debug.apk
+
+android-remove:
+	adb uninstall com.vulkanexamples.cube || true
+
+android-run:
+	adb shell monkey -p com.example.myapp -c android.intent.category.LAUNCHER 1

@@ -36,6 +36,7 @@ func (u *uniformData) Bytes() []byte {
 
 func main() {
 	ash.SetDebug(false)
+	ash.SetValidations(false)
 
 	start()
 }
