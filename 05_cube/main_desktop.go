@@ -58,8 +58,9 @@ func start() {
 		log.Fatal(err)
 	}
 
-	cleanup := ash.NewCleanup(&manager)
+	var cleanup ash.Cleanup
 	defer cleanup.Destroy()
+	cleanup.Add(&manager)
 
 	swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj :=
 		initVulkanResources(&manager, &cleanup, windowWidth, windowHeight)

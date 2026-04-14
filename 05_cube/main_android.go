@@ -23,10 +23,6 @@ func start() {
 	inputQueueChan := make(chan *android.InputQueue, 1)
 
 	app.Main(func(a app.NativeActivity) {
-		if err := vk.Init(); err != nil {
-			log.Fatal(err)
-		}
-
 		a.HandleNativeWindowEvents(nativeWindowEvents)
 		a.HandleInputQueueEvents(inputQueueEvents)
 		go app.HandleInputQueues(inputQueueChan, func() {
@@ -38,6 +34,7 @@ func start() {
 			manager ash.Manager
 			cleanup ash.Cleanup
 			window  *android.NativeWindow
+			err     error
 		)
 
 		stopRender := func() {
@@ -55,7 +52,6 @@ func start() {
 			}
 
 			cleanup.Destroy()
-			cleanup = ash.NewCleanup(&manager)
 
 			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj := initVulkanResources(&manager, &cleanup, width, height)
 
@@ -75,6 +71,7 @@ func start() {
 				case app.OnDestroy:
 					stopRender()
 					cleanup.Destroy()
+					manager.Destroy()
 					return
 				}
 
@@ -89,7 +86,15 @@ func start() {
 			case event := <-nativeWindowEvents:
 				switch event.Kind {
 				case app.NativeWindowCreated:
-					var err error
+					err = vk.SetDefaultGetInstanceProcAddr()
+					if err != nil {
+						log.Fatal(err)
+					}
+					err = vk.Init()
+					if err != nil {
+						log.Fatal(err)
+					}
+
 					window = event.Window
 					windowPtr := window.Ptr()
 
@@ -101,13 +106,13 @@ func start() {
 						log.Fatal(err)
 					}
 
-					cleanup = ash.NewCleanup(&manager)
 					log.Println("Vulkan initialized on Android")
 					startRender()
 
 				case app.NativeWindowDestroyed:
 					stopRender()
 					cleanup.Destroy()
+					manager.Destroy()
 					window = nil
 
 				case app.NativeWindowRedrawNeeded:
