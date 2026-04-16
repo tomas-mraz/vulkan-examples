@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"sync/atomic"
 
@@ -44,16 +45,23 @@ func start() {
 			}
 		}
 
-		startRender := func() {
-			width := uint32(android.NativeWindowGetWidth(window))
-			height := uint32(android.NativeWindowGetHeight(window))
-			if width == 0 || height == 0 {
-				width, height = 640, 480
+		tryStartRender := func() error {
+			if window == nil {
+				return ash.ErrSurfaceNotReady
 			}
 
 			cleanup.Destroy()
 
-			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj := initVulkanResources(&manager, &cleanup, width, height)
+			width := uint32(android.NativeWindowGetWidth(window))
+			height := uint32(android.NativeWindowGetHeight(window))
+			if width == 0 || height == 0 {
+				return ash.ErrSurfaceNotReady
+			}
+			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj, err := initVulkanResources(&manager, &cleanup, width, height)
+			if err != nil {
+				cleanup.Destroy()
+				return err
+			}
 
 			dt := ash.NewDisplayTiming(manager.Device, swapchain.DefaultSwapchain())
 			ctx := ash.NewSwapchainContext(&manager, &swapchain)
@@ -62,6 +70,18 @@ func start() {
 			renderRunning.Store(true)
 
 			go renderLoop(&ctx, &cmdCtx, rasterPass, gfx, desc, &uniforms, syncObj)
+			return nil
+		}
+
+		startRender := func() {
+			err := tryStartRender()
+			if err != nil {
+				if errors.Is(err, ash.ErrSurfaceNotReady) {
+					log.Println("Render start postponed: surface not ready")
+					return
+				}
+				log.Fatal(err)
+			}
 		}
 
 		for {

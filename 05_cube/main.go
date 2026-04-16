@@ -50,52 +50,52 @@ func initVulkanResources(manager *ash.Manager, cleanup *ash.Cleanup, width, heig
 	desc ash.DescriptorInfo,
 	gfx ash.PipelineRasterization,
 	sync ash.SyncInfo,
+	err error,
 ) {
 	windowSize := ash.NewExtentSize(int(width), int(height))
-	var err error
 	swapchain, err = ash.NewSwapchain(manager, windowSize)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&swapchain)
 	swapchainLen := swapchain.DefaultSwapchainLen()
 
 	depth, err := ash.NewImageDepth(manager.Device, manager.Gpu, width, height, vk.FormatD16Unorm)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&depth)
 
 	rasterPass, err = ash.NewRasterPassWithDepth(manager.Device, swapchain.DisplayFormat, depth.GetFormat())
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&rasterPass)
 
-	if err := swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), depth.GetView()); err != nil {
-		log.Fatal(err)
+	if err = swapchain.CreateFramebuffers(rasterPass.GetRenderPass(), depth.GetView()); err != nil {
+		return ash.Swapchain{}, ash.RasterizationPass{}, ash.CommandContext{}, ash.ImageResource{}, ash.UniformBuffers{}, ash.DescriptorInfo{}, ash.PipelineRasterization{}, ash.SyncInfo{}, err
 	}
 	cmdCtx, err = ash.NewCommandContext(manager.Device, 0, swapchainLen)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&cmdCtx)
 
 	pixels, texW, texH, err := ash.DecodePNG(gopherPng)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 
 	texture, err = ash.NewImageTexture(manager.Device, manager.Gpu, texW, texH, pixels)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&texture)
 	texture.TransitionLayout(manager.Queue, cmdCtx.GetCmdPool(), vk.ImageLayoutShaderReadOnlyOptimal)
 
 	uniforms, err = ash.NewUniformBuffers(manager.Device, manager.Gpu, swapchainLen, uniformDataSize)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&uniforms)
 
@@ -104,7 +104,7 @@ func initVulkanResources(manager *ash.Manager, cleanup *ash.Cleanup, width, heig
 		ash.NewBindingImageSampler(vk.ShaderStageFlags(vk.ShaderStageFragmentBit), &texture, []vk.Sampler{texture.GetSampler()}),
 	})
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&desc)
 
@@ -117,13 +117,13 @@ func initVulkanResources(manager *ash.Manager, cleanup *ash.Cleanup, width, heig
 		DepthTestEnable:      true,
 	})
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&gfx)
 
 	sync, err = ash.NewSyncObjects(manager.Device)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 	cleanup.Add(&sync)
 

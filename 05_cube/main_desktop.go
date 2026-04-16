@@ -62,8 +62,10 @@ func start() {
 	defer cleanup.Destroy()
 	cleanup.Add(&manager)
 
-	swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj :=
-		initVulkanResources(&manager, &cleanup, windowWidth, windowHeight)
+	swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj, err := initVulkanResources(&manager, &cleanup, windowWidth, windowHeight)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx := ash.NewSwapchainContext(&manager, &swapchain)
 
