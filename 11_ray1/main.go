@@ -94,8 +94,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup := ash.NewCleanup(&manager)
+	var cleanup ash.Cleanup
 	defer cleanup.Destroy()
+	cleanup.Add(&manager)
 
 	// Query RT pipeline properties (use hardcoded defaults, standard on all GPUs)
 	const shaderGroupHandleSize = 32

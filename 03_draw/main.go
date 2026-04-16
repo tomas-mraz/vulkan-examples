@@ -57,8 +57,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup := ash.NewCleanup(&manager)
+	var cleanup ash.Cleanup
 	defer cleanup.Destroy()
+	cleanup.Add(&manager)
 
 	windowSize := waitForFramebufferSize(window)
 	swapchain, err := ash.NewSwapchain(&manager, windowSize)

@@ -121,8 +121,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cleanup := ash.NewCleanup(&manager)
+	var cleanup ash.Cleanup
 	defer cleanup.Destroy()
+	cleanup.Add(&manager)
 
 	//TODO check is AFTER creating manager with required version Vulkan 1.2 ... so it is strange to check it now
 	requiredVersion := vk.MakeVersion(1, 2, 0)
