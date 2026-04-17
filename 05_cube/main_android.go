@@ -3,144 +3,20 @@
 package main
 
 import (
-	"errors"
 	"log"
-	"sync/atomic"
 
-	vk "github.com/tomas-mraz/vulkan"
-	"github.com/tomas-mraz/vulkan-ash"
+	ash "github.com/tomas-mraz/vulkan-ash"
 
-	"github.com/tomas-mraz/android-go/android"
 	"github.com/tomas-mraz/android-go/app"
 )
 
-var renderRunning atomic.Bool
-
-func pollEvents() bool { return renderRunning.Load() }
-
 func start() {
-	nativeWindowEvents := make(chan app.NativeWindowEvent)
-	inputQueueEvents := make(chan app.InputQueueEvent, 1)
-	inputQueueChan := make(chan *android.InputQueue, 1)
-
 	app.Main(func(a app.NativeActivity) {
-		a.HandleNativeWindowEvents(nativeWindowEvents)
-		a.HandleInputQueueEvents(inputQueueEvents)
-		go app.HandleInputQueues(inputQueueChan, func() {
-			a.InputQueueHandled()
-		}, app.SkipInputEvents)
-		a.InitDone()
+		host := ash.NewAndroidHost(a)
+		session := ash.NewSession(host, appName, nil)
 
-		var (
-			manager ash.Manager
-			cleanup ash.Cleanup
-			window  *android.NativeWindow
-			err     error
-		)
-
-		stopRender := func() {
-			if renderRunning.Load() {
-				renderRunning.Store(false)
-				vk.DeviceWaitIdle(manager.Device)
-			}
-		}
-
-		tryStartRender := func() error {
-			if window == nil {
-				return ash.ErrSurfaceNotReady
-			}
-
-			cleanup.Destroy()
-
-			width := uint32(android.NativeWindowGetWidth(window))
-			height := uint32(android.NativeWindowGetHeight(window))
-			if width == 0 || height == 0 {
-				return ash.ErrSurfaceNotReady
-			}
-			swapchain, rasterPass, cmdCtx, _, uniforms, desc, gfx, syncObj, err := initVulkanResources(&manager, &cleanup, width, height)
-			if err != nil {
-				cleanup.Destroy()
-				return err
-			}
-
-			dt := ash.NewDisplayTiming(manager.Device, swapchain.DefaultSwapchain())
-			ctx := ash.NewSwapchainContext(&manager, &swapchain)
-			ctx.SetDisplayTiming(&dt)
-
-			renderRunning.Store(true)
-
-			go renderLoop(&ctx, &cmdCtx, rasterPass, gfx, desc, &uniforms, syncObj)
-			return nil
-		}
-
-		startRender := func() {
-			err := tryStartRender()
-			if err != nil {
-				if errors.Is(err, ash.ErrSurfaceNotReady) {
-					log.Println("Render start postponed: surface not ready")
-					return
-				}
-				log.Fatal(err)
-			}
-		}
-
-		for {
-			select {
-			case event := <-a.LifecycleEvents():
-				switch event.Kind {
-				case app.OnDestroy:
-					stopRender()
-					cleanup.Destroy()
-					manager.Destroy()
-					return
-				}
-
-			case event := <-inputQueueEvents:
-				switch event.Kind {
-				case app.QueueCreated:
-					inputQueueChan <- event.Queue
-				case app.QueueDestroyed:
-					inputQueueChan <- nil
-				}
-
-			case event := <-nativeWindowEvents:
-				switch event.Kind {
-				case app.NativeWindowCreated:
-					err = vk.SetDefaultGetInstanceProcAddr()
-					if err != nil {
-						log.Fatal(err)
-					}
-					err = vk.Init()
-					if err != nil {
-						log.Fatal(err)
-					}
-
-					window = event.Window
-					windowPtr := window.Ptr()
-
-					createSurfaceFn := func(instance vk.Instance) (vk.Surface, error) {
-						return ash.NewAndroidSurface(instance, windowPtr)
-					}
-					manager, err = ash.NewManager(appName, createSurfaceFn, nil)
-					if err != nil {
-						log.Fatal(err)
-					}
-
-					log.Println("Vulkan initialized on Android")
-					startRender()
-
-				case app.NativeWindowDestroyed:
-					stopRender()
-					cleanup.Destroy()
-					manager.Destroy()
-					window = nil
-
-				case app.NativeWindowRedrawNeeded:
-					stopRender()
-					startRender()
-					a.NativeWindowRedrawDone()
-				}
-			}
+		if err := session.Run(&cubeRenderer{}); err != nil {
+			log.Fatal(err)
 		}
 	})
 }
