@@ -125,11 +125,6 @@ func main() {
 	defer cleanup.Destroy()
 	cleanup.Add(&manager)
 
-	//TODO check is AFTER creating manager with required version Vulkan 1.2 ... so it is strange to check it now
-	requiredVersion := vk.MakeVersion(1, 2, 0)
-	if ok, ver := ash.CheckDeviceApiVersion(manager.Gpu, requiredVersion); !ok {
-		log.Fatalf("GPU supports Vulkan %s, but %s is required", vk.Version(ver), vk.Version(requiredVersion))
-	}
 	if ok, missing := ash.CheckDeviceExtensions(manager.Gpu, ash.RaytracingDeviceExtensions()); !ok {
 		log.Fatalf("GPU does not support HW accelerated ray tracing, missing extensions: %v", missing)
 	}
