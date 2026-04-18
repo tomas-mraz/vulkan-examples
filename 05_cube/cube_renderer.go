@@ -71,8 +71,10 @@ func (r *cubeRenderer) CreateOnce(s *ash.Session) error {
 		return fmt.Errorf("NewDescriptorSets: %w", err)
 	}
 
-	r.viewMatrix.LookAt(&ash.Vec3{0.0, 3.0, 5.0}, &ash.Vec3{0.0, 0.0, 0.0}, &ash.Vec3{0.0, 1.0, 0.0})
 	r.modelMatrix.Identity()
+	// View matrix is derived from the swapchain shape in CreateSized so that
+	// the camera can be pulled back on portrait displays where the cube would
+	// otherwise be clipped horizontally.
 	r.startTime = time.Now()
 	r.onceBuilt = true
 	return nil
@@ -113,7 +115,7 @@ func (r *cubeRenderer) CreateSized(s *ash.Session, extent vk.Extent2D) error {
 		return fmt.Errorf("NewPipelineRasterization: %w", err)
 	}
 
-	r.projMatrix = computeProjection(s.Swapchain)
+	r.viewMatrix, r.projMatrix = computeCamera(s.Swapchain)
 	r.sizedBuilt = true
 	return nil
 }
@@ -159,19 +161,62 @@ func (r *cubeRenderer) Draw(s *ash.Session, f *ash.Frame) error {
 	return nil
 }
 
-// computeProjection derives a Vulkan-handed perspective matrix pre-multiplied
-// by the swapchain's preTransform so Android surface rotations render without
-// compositor overhead.
-func computeProjection(swap *ash.Swapchain) ash.Mat4x4 {
+// computeCamera derives the view and projection matrices for the current
+// swapchain shape.
+//
+// The perspective uses a fixed 45° vertical FOV, which looks natural on
+// landscape / square displays. On portrait displays the horizontal FOV at the
+// same vertical setting becomes too narrow (≈21° at aspect 0.45), so the
+// 2x2x2 cube — especially its rotating ≈2.83-unit diagonal — would clip on
+// the sides. Rather than warping the perspective (which makes the cube look
+// stretched), we pull the camera straight back by 1/aspect. The cube stays
+// geometrically correct, just smaller on-screen. Matches the user-accepted
+// trade-off "i za cenu že bude menší".
+//
+// When the device is physically rotated on Android, the swapchain keeps its
+// native-panel extent (e.g. 1080x2400) and the scene is rotated into place by
+// PreRotationMatrix. The *apparent* on-screen aspect after pre-rotation swaps
+// when PreTransform is 90° or 270°, so we swap width/height for the aspect
+// calculation to match what the user actually sees.
+//
+// Finally pre-rotation is concatenated onto the projection so the compositor
+// doesn't have to rotate the swapchain image at present time.
+func computeCamera(swap *ash.Swapchain) (view, proj ash.Mat4x4) {
+	// Empirically on Moto 30 Neo (Adreno 619) the swapchain in landscape hold
+	// reports currentExtent already in "user-visible" orientation (2300x1080),
+	// and currentTransform = Rotate90. When we render a square cube directly
+	// into that 2300x1080 framebuffer and let the driver scan it out with
+	// preTransform = Rotate90 (bypass), the driver effectively stretches the
+	// 2300x1080 buffer to fit the native 1080x2400 panel without a rotation
+	// pass — a vendor quirk rather than what Vulkan's spec promises.
+	//
+	// Net effect of the stretch: panel_X = fb_X * (1080/2300), panel_Y = fb_Y
+	// * (2400/1080). For the cube to look square to the user in landscape we
+	// must pre-compensate by rendering it wide-and-short in framebuffer (about
+	// 4.7x wider than tall). That falls out for free from using the "native"
+	// landscape aspect (extent width/height = 2.13) in the perspective AND
+	// applying PreRotationMatrix to rotate the content into the physical
+	// scan-out direction. Orientation and proportion then align.
+	//
+	// Portrait: extent is 1080x2400 (native), preTransform = IDENTITY, the
+	// scale-back and no-op PreRotationMatrix keep the old portrait behavior.
 	aspect := float32(swap.DisplaySize.Width) / float32(swap.DisplaySize.Height)
-	var proj ash.Mat4x4
+
+	scale := float32(1.0)
+	if aspect < 1.0 {
+		scale = 1.0 / aspect
+	}
+	eye := ash.Vec3{0, 3 * scale, 5 * scale}
+	view.LookAt(&eye, &ash.Vec3{0, 0, 0}, &ash.Vec3{0, 1, 0})
+
 	proj.Perspective(ash.DegreesToRadians(45.0), aspect, 0.1, 100.0)
 	proj[1][1] *= -1 // flip Y for Vulkan
 
 	preRot := swap.PreRotationMatrix()
-	var out ash.Mat4x4
-	out.Mult(&preRot, &proj)
-	return out
+	var rotated ash.Mat4x4
+	rotated.Mult(&preRot, &proj)
+	proj = rotated
+	return view, proj
 }
 
 func writeCubeUniforms(uniforms *ash.UniformBuffers, index uint32, proj, view, model *ash.Mat4x4) {

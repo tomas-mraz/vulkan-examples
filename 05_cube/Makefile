@@ -68,7 +68,7 @@ clean: ## Remove binary, compiled shaders, and Android build artifacts
 	cd android && ./gradlew clean 2>/dev/null || true
 
 android-install:
-	cd ./android/app/build/outputs/apk/debug && adb install app-x86_64-debug.apk
+	cd ./android/app/build/outputs/apk/debug && adb install app-arm64-v8a-debug.apk
 
 android-remove:
 	adb uninstall com.vulkanexamples.cube || true
