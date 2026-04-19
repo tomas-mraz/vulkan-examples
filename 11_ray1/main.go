@@ -2,8 +2,6 @@ package main
 
 import (
 	_ "embed"
-	"log"
-	"runtime"
 	"unsafe"
 
 	vk "github.com/tomas-mraz/vulkan"
@@ -19,11 +17,7 @@ var missShaderCode []byte
 //go:embed shaders/closesthit.rchit.spv
 var closestHitShaderCode []byte
 
-const (
-	windowWidth  = 800
-	windowHeight = 600
-	appName      = "Ray Tracing Triangle"
-)
+const appName = "Ray Tracing Triangle"
 
 // uniformData matches the raygen shader's UBO layout. Both matrices are
 // inverted on the CPU and consumed directly in the shader to un-project
@@ -39,13 +33,12 @@ func (u *uniformData) Bytes() []byte {
 	return unsafe.Slice((*byte)(unsafe.Pointer(u)), uniformSize)
 }
 
-func init() {
-	runtime.LockOSThread()
-}
-
 func main() {
 	ash.SetDebug(false)
+	start()
+}
 
+func newSessionOptions() *ash.SessionOptions {
 	// Chain the ray tracing / acceleration structure / buffer-device-address
 	// feature toggles as pNext into the device create info. The order of
 	// chaining doesn't matter to Vulkan but we keep AS at the head since it
@@ -65,20 +58,22 @@ func main() {
 		PNext:                 unsafe.Pointer(&rtPipelineFeatures),
 	}
 
-	host := ash.NewDesktopHost(windowWidth, windowHeight, appName)
-	sess := ash.NewSession(host, appName, &ash.SessionOptions{
+	return &ash.SessionOptions{
 		// VK_GOOGLE_display_timing is Android-only; nothing to gain on desktop
-		// RT, and the CheckDeviceExtensions guard in Session would skip it
-		// anyway — keep the signal explicit here.
+		// for this RT demo, so keep it disabled across platforms.
 		EnableTiming: false,
 		DeviceOptions: &ash.DeviceOptions{
 			DeviceExtensions: ash.RaytracingDeviceExtensions(),
 			PNextChain:       unsafe.Pointer(&asFeatures),
 			ApiVersion:       vk.MakeVersion(1, 2, 0),
 		},
-	})
-
-	if err := sess.Run(&ray1Renderer{}); err != nil {
-		log.Fatal(err)
 	}
+}
+
+func run(host ash.Host) error {
+	sess := ash.NewSession(host, appName, newSessionOptions())
+	if err := sess.Run(&ray1Renderer{}); err != nil {
+		return err
+	}
+	return nil
 }
