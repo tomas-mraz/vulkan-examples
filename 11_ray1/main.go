@@ -67,11 +67,19 @@ func newSessionOptions() *ash.SessionOptions {
 			PNextChain:       unsafe.Pointer(&asFeatures),
 			ApiVersion:       vk.MakeVersion(1, 2, 0),
 		},
+		// RT sample: ask the swapchain for IDENTITY so the storage image
+		// dimensions match the user-visible orientation. No pre-rotation matrix
+		// needed in the raygen shader.
+		SwapchainOptions: ash.SwapchainOptions{PreferIdentityTransform: true},
 	}
 }
 
 func run(host ash.Host) error {
 	sess := ash.NewSession(host, appName, newSessionOptions())
+	// Primary orientation for the RT triangle is landscape. When the Android
+	// device is held in portrait the Session paints the swapchain red instead
+	// of tracing with a wrong aspect.
+	sess.SetPrimaryOrientation(ash.OrientationPortrait)
 	if err := sess.Run(&ray1Renderer{}); err != nil {
 		return err
 	}
