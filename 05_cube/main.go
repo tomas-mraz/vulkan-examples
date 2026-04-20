@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"log/slog"
 	"unsafe"
 
 	ash "github.com/tomas-mraz/vulkan-ash"
@@ -32,6 +33,7 @@ func (u *uniformData) Bytes() []byte {
 }
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	ash.SetDebug(true)
 	ash.SetValidations(false)
 

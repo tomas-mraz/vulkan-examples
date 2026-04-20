@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"log/slog"
 	"math"
 
 	"github.com/tomas-mraz/vulkan-ash"
@@ -16,7 +17,7 @@ var fragShaderCode []byte
 const appName = "Rotating Triangle"
 
 func main() {
-	ash.SetLogDebug()
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	ash.SetDebug(false)
 	start()
 }

@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"log"
+	"log/slog"
 	"math"
 	"runtime"
 	"time"
@@ -30,6 +31,8 @@ func init() {
 }
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
 	if err := glfw.Init(); err != nil {
 		log.Fatal(err)
 	}
