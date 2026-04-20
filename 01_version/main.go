@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 
 	vk "github.com/tomas-mraz/vulkan"
 )
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
 	if err := vk.SetDefaultGetInstanceProcAddr(); err != nil {
 		log.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-APP = 07_model
+APP = 07_model_textured
 SHADER_DIR = shaders
 LINUX_TAGS = -tags wayland
 GLSLC = glslangValidator

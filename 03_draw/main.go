@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"log/slog"
 
 	"github.com/tomas-mraz/vulkan-ash"
 )
@@ -15,6 +16,7 @@ var fragShaderCode []byte
 const appName = "VulkanDraw"
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	ash.SetDebug(false)
 	start()
 }
